@@ -1,2 +1,40 @@
-# Advanced-Root-Toolkit
-一個簡單的ROOT軍火庫，有所有的ROOT面具的紙飛機群，有HAM-OSS的隱藏應用列表配置，有ROOT工具（內置gg修改器，Hyperlsland，shizuku調教版，Folkpure，月虹提權助手，ghostlock，搞機工具箱等48種工具），ROOT面具（阿爾法旗下三種分支，kernelSU，有SukiSU Ultra 及旗下的19個分之，Apatch，有Folkpatch 旗下的兩個分之，SKroot以及SKroot pro），模塊（zygisk1.5.0,lsp2.2.1,HAM-OSS173等旗下28個模塊），檢測軟件（momo,Duck Detector等18個檢測軟件以及春秋檢測報錯解決方法），可信任的Google密鑰（持續更新），cmd.sh，自動安裝檢測軟件。
+# 🛠️ Advanced-Root-Toolkit (進階 ROOT 軍火庫)
+
+歡迎來到由 **抖音user哥** 維持維護的進階 Android Root 資產存檔庫。本專案專為 Android 進階玩家與環境調校開發者打造，集成了歷史、主流及前沿的完整 Root 工具鏈與自動化腳本。
+
+---
+
+## 🚀 核心功能與內置資產
+
+### 📂 1. 互動式終端工具箱 (`cmd.sh`)
+* **動態分組面板**：支援自動掃描目錄，高亮顯示各大面具陣營、工具與檢測軟體。
+* **一鍵/單獨安裝**：整合高效安裝邏輯，可一鍵批量靜默部署全套檢測環境，或指定編號單獨升級。
+* **分區生命線**：內置高通（Snapdragon）與聯發科（MTK）雙平台基帶、字庫、Persist 分區一鍵備份與還原指令。
+
+### 📦 2. 搞機軍火庫資產清單
+
+| 分類 | 數量/包含內容 | 亮點資產 |
+| :--- | :--- | :--- |
+| **ROOT 面具** | 20+ 個核心分支及衍生版 | Magisk Alpha 旗下三大分支、KernelSU、**SukiSU Ultra 及其 19 個衍生分支**、APatch（含 FolkPatch 兩大分支）、SKroot / SKroot Pro。 |
+| **搞機工具** | **48 種** 進階 ROOT 工具 | GG修改器、Hyperlsland、Shizuku 調教版、FolkPure、月虹提權助手、GhostLock、搞機工具箱等。 |
+| **核心模塊** | **28 個** 實用 Magisk/Ksu 模塊 | Zygisk Next 1.5.0、LSPosed v2.2.1、HMA-OSS (Zygisk-oss-173) 等。 |
+| **環境檢測** | **18 個** 嚴苛檢測軟體與指南 | Momo、Ruru、Hunter、Duck Detector 等，**內置《春秋檢測報錯解決方法.txt》實戰指南**。 |
+| **安全與社群** | 必備連結與密鑰 | 持續更新的 **可信任 Google 密鑰**、各大主流 ROOT 面具官方電報（紙飛機）社群群組導航。 |
+
+---
+
+## 🛠️ 自動化一鍵部署部署 (`service.sh`)
+內置 `service.sh` 靜默安裝腳本：
+1. **風控繞過**：開機自動動態關閉 Play Protect 風控掃描，防止測試版 APK 被系統攔截。
+2. **無痕防檢測**：自動部署完畢後，即時粉碎暫存安裝包目錄並恢復系統安全設定，完美對抗極端敏感檢測軟體的深層掃描。
+
+---
+
+## ⚠️ 免責聲明 (Disclaimer)
+* 本倉庫所收集之工具及腳本皆涉及 Android 系統底層核心修改、分區讀寫（dd 指令）等高風險操作。
+* 使用本倉庫工具導致的任何硬體損壞、無限重啟（Bootloop）、數據丟失或基帶未知，本倉庫及作者概不負責。
+* 刷機千萬條，備份第一條。操作前請務必確保已備份重要數據。
+
+---
+**開發者**：抖音user哥  
+*持續收集、整理與更新，打造最純粹的 Android 底層玩機避難所。*
