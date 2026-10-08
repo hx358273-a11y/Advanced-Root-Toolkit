@@ -1,5 +1,7 @@
 # 🛠️ Advanced-Root-Toolkit (進階 ROOT 軍火庫)
 
+![GitHub release (latest by date)](https://shields.io)
+
 歡迎來到由 **抖音user哥** 維持維護的進階 Android Root 資產存檔庫。本專案專為 Android 進階玩家與環境調校開發者打造，集成了歷史、主流及前沿的完整 Root 工具鏈與自動化腳本。
 
 ---
