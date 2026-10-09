@@ -307,7 +307,7 @@ kernelsu_family_menu() {
         echo -e " 4)  進入：KernelSU-Next 專區"
         echo -e " 5)  Ksu越獄專區 (Ksu Jailbreak)"
         echo -e " 6)  MizuSU 核心"
-        echo -e " 7)  ReSuKISU (上游炸了停更版)"
+        echo -e " 7)  ReSukiSU (以改名為BakaSU)"
         echo -e " 8)  Sukisu Ultra (內含 AK3.zip)"
         echo -e " 9)  進入：Wild_KSU 專區"
         echo -e " 10) ZySU 專區 (⚠️不支援 4.x & 5.x 內核)"
@@ -344,7 +344,7 @@ kernelsu_family_menu() {
                 ;;
             5) scan_and_install "$R/Ksu Jailbreak/" ;;
             6) scan_and_install "$R/MizuSU/" ;;
-            7) scan_and_install "$R/ReSuKISU (Broken upstream, unable to update)/" ;;
+            7) scan_and_install "$R/BakaSU (Broken upstream, unable to update)/" ;;
             8) scan_and_install "$R/Sukisu Ultra (AK3.zip included)/" ;;
             9) 
                 while true; do
