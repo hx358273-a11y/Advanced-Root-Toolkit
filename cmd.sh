@@ -1,9 +1,9 @@
 #!/system/bin/sh
 
-# =================================================================
+# =======================================================
 #               Top Root Arsenal - Interactive Panel
-#                 開發者：抖音user哥 (TikTok user_Bro)
-# =================================================================
+#               開發者：抖音user哥 (TikTok user_Bro)
+# =======================================================
 
 # 智慧動態路徑嗅探
 if [ -d "/storage/emulated/0" ]; then
@@ -26,6 +26,26 @@ PURPLE='\e[1;35m'
 CYAN='\e[1;36m'
 NC='\e[0m'
 
+# SELinux 狀態檢測與自動修復
+check_selinux() {
+    # 檢查是否擁有 Root 權限
+    if [ $(id -u) != 0 ]; then
+        echo -e "${RED}[錯誤] 請使用 root 權限執行此檢查！${NC}"
+        exit 1
+    fi
+
+    STATUS=$(getenforce)
+    echo -e "${CYAN}[系統狀態] 目前 SELinux 狀態為: ${YELLOW}$STATUS${NC}"
+
+    if [ "$STATUS" = "Permissive" ]; then
+        echo -e "${YELLOW}[提示] 正在將狀態改回強制模式 (Enforcing)...${NC}"
+        setenforce 1
+        echo -e "${GREEN}[成功] 修改完成，目前狀態: $(getenforce)${NC}"
+    else
+        echo -e "${GREEN}[安全] 系統已處於安全模式，無需修改。${NC}"
+    fi
+}
+
 # Zygisk Next (zn-daemon) 進程狀態即時監測
 check_zygisk_status() {
     if pgrep -f "zn-daemon" >/dev/null 2>&1; then
@@ -33,16 +53,19 @@ check_zygisk_status() {
     elif pgrep -f "zygisk" >/dev/null 2>&1; then
         echo -e "${YELLOW}[核心狀態] 偵測到舊版 Zygisk 守護進程。${NC}"
     else
-        echo -e "${RED}[核心狀態] 未偵測到 Zygisk 環境 (可能需要重啟或處於非隱蔽狀態)${NC}"
+        echo -e "${RED}[核心狀態] 未偵測到 Zygisk 環境（可能需要重啟或處於非隱蔽狀態）${NC}"
     fi
 }
 
 show_header() {
     clear
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}             頂級搞機軍火庫 (互動面板)           ${NC}"
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e " 開發者：抖音user哥"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "${GREEN}                頂級搞機軍火庫 (互動面板)        ${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "開發者：抖音user哥"
+    
+    # 執行各項狀態檢查
+    check_selinux
     check_zygisk_status
     echo ""
 }
@@ -52,7 +75,7 @@ run_oneplus_bypass() {
     local target_path="$BASE_DIR/Root_Tools_Pack/OnePlus Integrity & Anti-Cheat Bypass"
     
     show_header
-    echo -e "${YELLOW}⚠️ [ 頂級特種兵防線 - 智慧攔截提示 ]${NC}"
+    echo -e "${YELLOW}[ 頂級特種兵防線 - 智慧攔截提示 ]${NC}"
     echo -e "${CYAN}此目錄為硬核指令專區，內含一加內核解密與反作弊偵測腳本。${NC}"
     echo "-------------------------------------------------"
     echo -ne "${PURPLE}是否立刻載入並執行一加核心完整性 (Inte.ko) 檢測腳本？(y/n): ${NC}"
@@ -307,14 +330,16 @@ kernelsu_family_menu() {
         echo -e " 4)  進入：KernelSU-Next 專區"
         echo -e " 5)  Ksu越獄專區 (Ksu Jailbreak)"
         echo -e " 6)  MizuSU 核心"
-        echo -e " 7)  ReSukiSU (以改名為BakaSU)"
-        echo -e " 8)  Sukisu Ultra (內含 AK3.zip)"
+        echo -e " 7)  ReSukiSU (已改名為BakaSU)"
+        echo -e " 8)  SukiSU Ultra"
         echo -e " 9)  進入：Wild_KSU 專區"
         echo -e " 10) ZySU 專區 (⚠️不支援 4.x & 5.x 內核)"
-        echo -e " 11) 直達 KernelSU 基礎主目錄"
+        echo -e " 11) FinaSU"
+        echo -e " 12) Dafeiyu_KSU"
+        echo -e " 13) 直達 KernelSU 基礎主目錄"
         echo -e " 0)  返回上級選單"
         echo "-------------------------------------------------"
-        echo -n "請輸入編號 (0-11): "
+        echo -n "請輸入編號 (0-13): "
         read ksu_choice
         ksu_choice=$(echo "$ksu_choice" | tr -d '\r\n\t ')
         
@@ -323,50 +348,37 @@ kernelsu_family_menu() {
             1) scan_and_install "$R/Anti-Detection Manager/" ;;
             2) scan_and_install "$R/KernelSU Heavily Modded/" ;;
             3) scan_and_install "$R/KernelSU WebUI/" ;;
-            4) 
+            4) # ...後面接 KernelSU-Next 分流面板
+               ;;
+            5) scan_and_install "$R/Ksu Jailbreak/" ;;
+            6) scan_and_install "$R/MizuSU/" ;;
+            7) # ...後面接 BakaSU 分流面板
+               ;;
+            8) 
                 while true; do
                     show_header
-                    echo -e "${BLUE}>> KernelSU-Next 分流面板${NC}"
-                    echo -e " 1) KernelSU-Next 原版目錄"
+                    echo -e "${BLUE}>> SukiSU Ultra 分流面板${NC}"
+                    echo -e " 1) SukiSU Ultra 原版目錄"
                     echo -e " 2) 隨機包名隱蔽混淆版"
                     echo -e " 0) 返回 KSU 選單"
                     echo "-------------------------------------------------"
-                    echo -n "請選擇: "
+                    echo -ne "請選擇: "
                     read next_choice
                     next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
                     case "$next_choice" in
                         0|"") break ;;
-                        1) scan_and_install "$R/kernelSU-Next/" ;;
-                        2) scan_and_install "$R/kernelSU-Next/Package name obfuscation version/" ;;
+                        1) scan_and_install "$R/SukiSU Ultra/" ;;
+                        2) scan_and_install "$R/SukiSU Ultra/Spoofed/" ;;
                         *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
                     esac
                 done
                 ;;
-            5) scan_and_install "$R/Ksu Jailbreak/" ;;
-            6) scan_and_install "$R/MizuSU/" ;;
-            7) scan_and_install "$R/BakaSU (Broken upstream, unable to update)/" ;;
-            8) scan_and_install "$R/Sukisu Ultra (AK3.zip included)/" ;;
-            9) 
-                while true; do
-                    show_header
-                    echo -e "${BLUE}>> Wild_KSU 分流面板${NC}"
-                    echo -e " 1) Wild_KSU 原版目錄"
-                    echo -e " 2) 隨機包名隱蔽混淆版"
-                    echo -e " 0) 返回 KSU 選單"
-                    echo "-------------------------------------------------"
-                    echo -n "請選擇: "
-                    read wild_choice
-                    wild_choice=$(echo "$wild_choice" | tr -d '\r\n\t ')
-                    case "$wild_choice" in
-                        0|"") break ;;
-                        1) scan_and_install "$R/Wild_KSU/" ;;
-                        2) scan_and_install "$R/Wild_KSU/Package name obfuscation version/" ;;
-                        *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
-                    esac
-                done
-                ;;
+            9) # ...後面接 Wild_KSU 分流面板
+               ;;
             10) scan_and_install "$R/ZySU (Unsupported on Kernel v4.x & v5.x !!!)/" ;;
-            11) scan_and_install "$R/" ;;
+            11) scan_and_install "$R/FinaSU/" ;;
+            12) scan_and_install "$R/Dafeiyu_KSU/" ;;
+            13) scan_and_install "$R/" ;;
             *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
         esac
     done
@@ -575,33 +587,42 @@ fastboot flash boot boot.img
 fastboot reboot
 "; echo "-------------------------------------------------"; echo -n "按任意鍵返回..."; read -n 1 ;;
         3) show_header; echo -e "# =========================================
-# 高通骁龙（Snapdragon）核心字库保命还原指令
+# 高通驍龍（Snapdragon）核心字庫保命還原指令
 # =========================================
-# 提取字库指令（手机端 Termux 执行）
+#擷取字庫指令（手機端 Termux 執行）
 
-# 先進入超級使用者模式
+#先進入超級使用者模式
 su
 
-# 再輸入以下指令
+#在輸入以下指令
+
 dd if=/dev/block/by-name/modemst1 of=/sdcard/modemst1.img
 dd if=/dev/block/by-name/modemst2 of=/sdcard/modemst2.img
 dd if=/dev/block/by-name/fsg of=/sdcard/fsg.img
+dd if=/dev/block/by-name/fsc of=/sdcard/fsc.img
 dd if=/dev/block/by-name/persist of=/sdcard/persist_snapdragon.img
 dd if=/dev/block/by-name/devinfo of=/sdcard/devinfo.img
+dd if=/dev/block/by-name/modem_a of=/sdcard/modem_a.img
+dd if=/dev/block/by-name/modem_b of=/sdcard/modem_b.img
 
-# 刷入基帶跟字庫（电脑端执行）
-# 1. 【关键】先从普通 Fastboot 切换进入 Userspace Fastbootd 模式（解除写入保护）
+# 刷入基帶跟字庫（電腦端執行） 
+# 1.【關鍵】先從一般 Fastboot 切換進入 Userspace Fastbootd 模式（解除寫入保護）
+#先執行這個
 adb reboot bootloader
+#再執行這個
 fastboot reboot fastboot
 
-# 2. 依次闪存还原基带与传感器分区
+# 2. 依序還原閃存基頻與感測器分區
 fastboot flash modemst1 modemst1.img
 fastboot flash modemst2 modemst2.img
 fastboot flash fsg fsg.img
+fastboot flash fsc fsc.img
 fastboot flash persist persist_snapdragon.img
 fastboot flash devinfo devinfo.img
+fastboot flash modem_a modem_a.img
+fastboot flash modem_b modem_b.img
 
-# 3. 重启进入系统
+# 3.重啟進入系統
 fastboot reboot
 
 # =========================================
@@ -610,13 +631,19 @@ fastboot reboot
 # 提取基帶跟字庫（手机端 Termux 执行）
 su
 
-dd if=/dev/block/by-name/nvram    of=/sdcard/nvram.img
-dd if=/dev/block/by-name/nvdata   of=/sdcard/nvdata.img
-dd if=/dev/block/by-name/persist  of=/sdcard/persist.img
+dd if=/dev/block/by-name/nvram of=/sdcard/nvram.img
+dd if=/dev/block/by-name/nvdata of=/sdcard/nvdata.img
+dd if=/dev/block/by-name/nvcfg of=/sdcard/nvcfg.img
+dd if=/dev/block/by-name/persist of=/sdcard/persist.img
 dd if=/dev/block/by-name/protect1 of=/sdcard/protect1.img
 dd if=/dev/block/by-name/protect2 of=/sdcard/protect2.img
-dd if=/dev/block/by-name/seccfg   of=/sdcard/seccfg.img
-dd if=/dev/block/by-name/preloader of=/sdcard/preloader.img
+dd if=/dev/block/by-name/seccfg of=/sdcard/seccfg.img
+dd if=/dev/block/by-name/md_sec of=/sdcard/md_sec.img
+dd if=/dev/block/by-name/modem_a of=/sdcard/modem_a.img
+dd if=/dev/block/by-name/modem_b of=/sdcard/modem_b.img
+dd if=/dev/block/mmcblk0boot0 of=/sdcard/preloader_boot0.img
+dd if=/dev/block/mmcblk0boot1 of=/sdcard/preloader_boot1.img
+
 
 刷入基帶跟字庫（电脑端执行）
 1. 【关键】先切换进入 Userspace Fastbootd 模式（解除写入保护）
@@ -624,24 +651,35 @@ dd if=/dev/block/by-name/preloader of=/sdcard/preloader.img
 adb reboot bootloader
 fastboot reboot fastboot
 
-2. 依次閃存還原分區
+
+2. 依次閃存還原分區（若為單一分割槽或自動識別）
+
 fastboot flash nvram nvram.img
 fastboot flash nvdata nvdata.img
+fastboot flash nvcfg nvcfg.img
 fastboot flash persist persist.img
 fastboot flash protect1 protect1.img
 fastboot flash protect2 protect2.img
 fastboot flash seccfg seccfg.img
-fastboot flash preloader preloader.img
+fastboot flash md_sec md_sec.img
+fastboot flash modem_a modem_a.img
+fastboot flash modem_b modem_b.img
+
 
 如果電腦提示：cannot find partition，那麼請換這一行：
 fastboot flash nvram nvram.img
 fastboot flash nvdata nvdata.img
+fastboot flash nvcfg nvcfg.img
 fastboot flash persist persist.img
 fastboot flash protect1 protect1.img
 fastboot flash protect2 protect2.img
-fastboot flash preloader_a preloader.img
-fastboot flash preloader_b preloader.img
 fastboot flash seccfg seccfg.img
+fastboot flash md_sec md_sec.img
+fastboot flash modem_a modem_a.img
+fastboot flash modem_b modem_b.img
+fastboot flash preloader_a preloader_boot0.img
+fastboot flash preloader_b preloader_boot1.img
+
 3. 重启进入系统
 fastboot reboot
 "
