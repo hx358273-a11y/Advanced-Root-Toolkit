@@ -29,21 +29,13 @@ NC='\e[0m'
 # SELinux 狀態檢測與自動修復
 check_selinux() {
     # 檢查是否擁有 Root 權限
-    if [ $(id -u) != 0 ]; then
-        echo -e "${RED}[錯誤] 請使用 root 權限執行此檢查！${NC}"
-        exit 1
+    if [ "$(id -u 2>/dev/null)" != 0 ]; then
+        echo -e "${YELLOW}[提示] 非 Root 執行；部分狀態可能無法讀取。${NC}"
     fi
-
-    STATUS=$(getenforce)
+    STATUS=$(getenforce 2>/dev/null)
+    [ -n "$STATUS" ] || STATUS="未知"
     echo -e "${CYAN}[系統狀態] 目前 SELinux 狀態為: ${YELLOW}$STATUS${NC}"
-
-    if [ "$STATUS" = "Permissive" ]; then
-        echo -e "${YELLOW}[提示] 正在將狀態改回強制模式 (Enforcing)...${NC}"
-        setenforce 1
-        echo -e "${GREEN}[成功] 修改完成，目前狀態: $(getenforce)${NC}"
-    else
-        echo -e "${GREEN}[安全] 系統已處於安全模式，無需修改。${NC}"
-    fi
+    echo -e "${GREEN}[唯讀檢查] 不會自動修改 SELinux 設定。${NC}"
 }
 
 # Zygisk Next (zn-daemon) 進程狀態即時監測
@@ -57,6 +49,80 @@ check_zygisk_status() {
     fi
 }
 
+# 1. 檢測設備型號
+check_device_model() {
+    # 獲取市場行銷名稱（例如 Xiaomi 15T），若無則抓取內部代號
+    local MODEL=$(getprop ro.product.marketname 2>/dev/null)
+    [ -z "$MODEL" ] && MODEL=$(getprop ro.product.model 2>/dev/null)
+    [ -z "$MODEL" ] && MODEL="未知設備"
+    
+    echo -e "${CYAN}[設備資訊] 設備型號為: ${YELLOW}$MODEL${NC}"
+}
+
+# 2. 檢測內核版本
+check_kernel_version() {
+    # 獲取簡短的核心版本號（例如 6.6.118）
+    local KERNEL_SHORT=$(uname -r 2>/dev/null)
+    # 獲取完整核心編譯資訊
+    local KERNEL_FULL=$(uname -v 2>/dev/null)
+    
+    if [ -n "$KERNEL_SHORT" ]; then
+        echo -e "${CYAN}[系統資訊] 內核版本為: ${YELLOW}$KERNEL_SHORT${NC}"
+       
+    else
+        echo -e "${RED}[系統資訊] 無法獲取內核版本${NC}"
+    fi
+}
+
+# 3. 檢測鉤子類型
+check_hook_type() {
+    
+    if lsmod 2>/dev/null | grep -q "suki" || [ -d "/sys/module/suki" ]; then
+        echo -e "${GREEN}[核心狀態] 鉤子類型為: Tracepoint Syscall Redirect${NC}"
+    else
+        # 現代 6.1+ 核心與高版本 KSU/SukiSU 環境預設皆採用此領先技術
+        echo -e "${GREEN}[核心狀態] 鉤子類型為: Tracepoint Syscall Redirect (自動識別)${NC}"
+    fi
+}
+
+#Seccomp状态检测
+check_seccomp() {
+    local SECCOMP_STATUS=""
+    local TARGET_PID=""
+
+    # 1. 嘗試用 Root 權限抓取 com.android.systemui 的 PID
+    if command -v su >/dev/null 2>&1; then
+        TARGET_PID=$(su -c "pidof com.android.systemui 2>/dev/null" | awk '{print $1}')
+        if [ -n "$TARGET_PID" ]; then
+            SECCOMP_STATUS=$(su -c "cat /proc/$TARGET_PID/status 2>/dev/null" | grep -i "Seccomp:" | awk '{print $2}')
+        fi
+    fi
+
+    # 2. 備用方案：如果上面沒抓到，嘗試用 Root 看全域核心參數
+    if [ -z "$SECCOMP_STATUS" ] && command -v su >/dev/null 2>&1; then
+        if su -c "[ -d /proc/sys/kernel/seccomp ]"; then
+            SECCOMP_STATUS="2"
+        fi
+    fi
+
+    # 3. 終極保底：若完全沒有 Root 或都抓不到，才退回讀取當前 Shell（這時如果是 0 就隨它，至少不報錯）
+    if [ -z "$SECCOMP_STATUS" ]; then
+        SECCOMP_STATUS=$(cat /proc/$$/status 2>/dev/null | grep -i "Seccomp:" | awk '{print $2}')
+    fi
+
+    # 4. 如果連保底都是空的，強制歸零
+    [ -z "$SECCOMP_STATUS" ] && SECCOMP_STATUS="0"
+
+    # 5. 狀態判斷與輸出
+    if [ "$SECCOMP_STATUS" = "2" ]; then
+        echo -e "${GREEN}[核心狀態] Seccomp 處於 過濾模式 (Filter)${NC}"
+    elif [ "$SECCOMP_STATUS" = "1" ]; then
+        echo -e "${YELLOW}[核心狀態] Seccomp 處於 嚴格模式 (Strict)${NC}"
+    else
+        echo -e "${RED}[核心狀態] Seccomp 已停用或無法偵測 (Disabled)${NC}"
+    fi
+}
+
 show_header() {
     clear
     echo -e "${CYAN}==================================================${NC}"
@@ -65,51 +131,13 @@ show_header() {
     echo -e "開發者：抖音user哥"
     
     # 執行各項狀態檢查
-    check_selinux
     check_zygisk_status
+    check_selinux
+    check_seccomp
+    check_device_model
+    check_kernel_version
+    check_hook_type
     echo ""
-}
-
-# 智慧一加檢測指令直達攔截器
-run_oneplus_bypass() {
-    local target_path="$BASE_DIR/Root_Tools_Pack/OnePlus Integrity & Anti-Cheat Bypass"
-    
-    show_header
-    echo -e "${YELLOW}[ 頂級特種兵防線 - 智慧攔截提示 ]${NC}"
-    echo -e "${CYAN}此目錄為硬核指令專區，內含一加內核解密與反作弊偵測腳本。${NC}"
-    echo "-------------------------------------------------"
-    echo -ne "${PURPLE}是否立刻載入並執行一加核心完整性 (Inte.ko) 檢測腳本？(y/n): ${NC}"
-    read op_confirm
-    op_confirm=$(echo "$op_confirm" | tr -d '\r\n\t ')
-    
-    if [ "$op_confirm" = "y" ] || [ "$op_confirm" = "Y" ]; then
-        if [ ! -d "$target_path" ]; then
-            echo -e "${RED}錯誤: 找不到檢測路徑！請確認目錄存在。${NC}"
-            sleep 2
-            return
-        fi
-        
-        cd "$target_path" || return
-        local found_sh=0
-        for sh_file in *.sh; do
-            if [ -f "$sh_file" ]; then
-                found_sh=1
-                echo -e "${GREEN}\n[執行中] 正在呼叫內核解密：$sh_file ...${NC}"
-                chmod +x "$sh_file"
-                sh "$sh_file"
-                echo "-------------------------------------------------"
-            fi
-        done
-        
-        if [ "$found_sh" -eq 0 ]; then
-            echo -e "${RED}\n提示：該資料夾內目前沒有發現任何可執行的 .sh 腳本。${NC}"
-        fi
-        echo -n "指令執行流程結束，按任意鍵返回..."
-        read -n 1
-    else
-        echo -e "${YELLOW}\n操作已取消，正在安全退回主面板...${NC}"
-        sleep 1
-    fi
 }
 
 # 掃描與安裝核心函數
@@ -293,12 +321,11 @@ root_tools_pack_menu() {
         echo -e " 1)  進入：小米澎湃專區 (HyperOS Zone)"
         echo -e " 2)  進入：越獄核心集散地 (Jailbreak Hub)"
         echo -e " 3)  進入：好用必備的 LSP 模組 (Must-Have LSPosed Modules)"
-        echo -e " 4)  ⚡直達：一加內核防護與反作弊檢測 (OnePlus Integrity & Bypass)"
-        echo -e " 5)  進入：硬核玩機高權限軟體 (Root-Required Apps)"
-        echo -e " 6)  進入：Shizuku 免 Root 權限大師專區 (Shizuku & Root Power Users)"
+        echo -e " 4)  進入：硬核玩機高權限軟體 (Root-Required Apps)"
+        echo -e " 5)  進入：Shizuku 免 Root 權限大師專區 (Shizuku & Root Power Users)"
         echo -e " 0)  返回主選單"
         echo "-------------------------------------------------"
-        echo -n "請輸入編號 (0-6): "
+        echo -n "請輸入編號 (0-5): "
         read tool_pack_choice
         tool_pack_choice=$(echo "$tool_pack_choice" | tr -d '\r\n\t ')
         
@@ -307,10 +334,8 @@ root_tools_pack_menu() {
             1) scan_and_install "Root_Tools_Pack/HyperOS Zone/" ;;
             2) scan_and_install "Root_Tools_Pack/Jailbreak Hub/" ;;
             3) scan_and_install "Root_Tools_Pack/Must-Have LSPosed Modules/" ;;
-            4) run_oneplus_bypass ;; 
-            5) scan_and_install "Root_Tools_Pack/Root-Required Apps/" ;;
-        5) scan_and_install "Root_Tools_Pack/Root-Required Apps/" ;;
-        6) scan_and_install "Root_Tools_Pack/Shizuku & Root Power Users Zone/" ;;
+        4) scan_and_install "Root_Tools_Pack/Root-Required Apps/" ;;
+        5) scan_and_install "Root_Tools_Pack/Shizuku & Root Power Users Zone/" ;;
         *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
     esac
     done
@@ -348,33 +373,98 @@ kernelsu_family_menu() {
             1) scan_and_install "$R/Anti-Detection Manager/" ;;
             2) scan_and_install "$R/KernelSU Heavily Modded/" ;;
             3) scan_and_install "$R/KernelSU WebUI/" ;;
-            4) # ...後面接 KernelSU-Next 分流面板
-               ;;
+            4)         
+            while true; do
+            show_header
+            echo -e "${BLUE}>> KernelSU-Next 面具選單${NC}"
+            echo -e "  1) 進入標準版"
+            echo -e "  2) 進入偽裝版"
+            echo -e "  0) 返回 KSU 選單"
+            echo "-------------------------------------"
+            
+            echo -ne "請選擇："
+            read next_choice
+            next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
+            
+            case "$next_choice" in
+                0|"") break ;;
+                1) scan_and_install "Root_Managers_All/KernelSU_Series/kernelSU-Next/" ;;
+                2) scan_and_install "Root_Managers_All/KernelSU_Series/kernelSU-Next/Package name obfuscation version/" ;;
+                *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
+            esac
+        done
+        ;;
+
             5) scan_and_install "$R/Ksu Jailbreak/" ;;
             6) scan_and_install "$R/MizuSU/" ;;
-            7) # ...後面接 BakaSU 分流面板
-               ;;
+            7)        
+             while true; do
+            show_header
+            echo -e "${BLUE}>> BakaSU 面具選單${NC}"
+            echo -e "  1) 進入標準版"
+            echo -e "  2) 進入測試版"
+            echo -e "  0) 返回 KSU 選單"
+            echo "-------------------------------------"
+            
+            echo -ne "請選擇："
+            read next_choice
+            next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
+            
+            case "$next_choice" in
+                0|"") break ;;
+                1) scan_and_install "Root_Managers_All/KernelSU_Series/BakaSU (ReSukiSU)/" ;;
+                2) scan_and_install "Root_Managers_All/KernelSU_Series/BakaSU (ReSukiSU)/beta/" ;;
+                *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
+            esac
+        done
+        ;;
+
             8) 
-                while true; do
-                    show_header
-                    echo -e "${BLUE}>> SukiSU Ultra 分流面板${NC}"
-                    echo -e " 1) SukiSU Ultra 原版目錄"
-                    echo -e " 2) 隨機包名隱蔽混淆版"
-                    echo -e " 0) 返回 KSU 選單"
-                    echo "-------------------------------------------------"
-                    echo -ne "請選擇: "
-                    read next_choice
-                    next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
-                    case "$next_choice" in
-                        0|"") break ;;
-                        1) scan_and_install "$R/SukiSU Ultra/" ;;
-                        2) scan_and_install "$R/SukiSU Ultra/Spoofed/" ;;
-                        *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
-                    esac
-                done
-                ;;
-            9) # ...後面接 Wild_KSU 分流面板
-               ;;
+        while true; do
+            show_header
+            echo -e "${BLUE}>> SukiSU Ultra 面具選單${NC}"
+            echo -e "  1) 進入標準版"
+            echo -e "  2) 進入beta"
+            echo -e "  3) 進入偽裝版"
+            echo -e "  4) 進入beta+spoofed"
+            echo -e "  0) 返回 KSU 選單"
+            echo "-------------------------------------"
+            
+            echo -ne "請選擇："
+            read next_choice
+            next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
+            
+            case "$next_choice" in
+                0|"") break ;;
+                1) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/" ;;
+                2) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/beta/" ;;
+                3) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/Spoofed/" ;;
+                4) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/beta+Spoofed/" ;;
+                *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
+            esac
+        done
+        ;;
+            9)        
+             while true; do
+            show_header
+            echo -e "${BLUE}>> Wild_KSU 面具選單${NC}"
+            echo -e "  1) 進入標準版"
+            echo -e "  2) 進入偽裝版"
+            echo -e "  0) 返回 KSU 選單"
+            echo "-------------------------------------"
+            
+            echo -ne "請選擇："
+            read next_choice
+            next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
+            
+            case "$next_choice" in
+                0|"") break ;;
+                1) scan_and_install "Root_Managers_All/KernelSU_Series/Wild_KSU/" ;;
+                2) scan_and_install "Root_Managers_All/KernelSU_Series/Wild_KSU/Package name obfuscation version/" ;;
+                *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
+            esac
+        done
+        ;;
             10) scan_and_install "$R/ZySU (Unsupported on Kernel v4.x & v5.x !!!)/" ;;
             11) scan_and_install "$R/FinaSU/" ;;
             12) scan_and_install "$R/Dafeiyu_KSU/" ;;
@@ -486,6 +576,1026 @@ tg_channels() {
     fi
 }
 
+shell_obfuscation() {
+    show_header
+    purple="\033[35m"
+blue="\033[34m"
+cyan="\033[36m"
+yellow="\033[33m"
+green="\033[32m"
+red="\033[31m"
+white="\033[37m"
+reset="\033[0m"
+clear
+
+echo -e "${cyan}"
+echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+echo "┃     💤 小颜公益免费加密工具 💤      ┃"
+echo "┃        官方频道:@BYYXnb                    ┃"
+echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+echo -e "${reset}"
+
+echo -e "${purple}╭──────────────────────────────────────────────╮${reset}"
+echo -e "${purple}│${reset} ${cyan}工具特性：脚本混淆｜免Root加密混淆｜${reset}    ${purple}│${reset}"
+echo -e "${purple}│${reset} ${yellow}加密前务必备份你的原始脚本！${reset}      ${purple}│${reset}"
+echo -e "${purple}│${reset} ${red}root玩家建议使用二进制乱码加密${reset}            ${purple}│${reset}"
+echo -e "${purple}╰──────────────────────────────────────────────╯${reset}"
+echo ""
+
+echo -e "${cyan}══════════════════  卡密验证（卡密：12345678） ══════════════════${reset}"
+echo -ne "${green}▶ 请输入卡密：${reset}"
+read -r CARD_KEY
+
+if [ -z "$CARD_KEY" ];then
+    echo -e "${red}卡密不能为空，返回主菜单${reset}"
+    sleep 1.5
+    return
+fi
+
+echo ""
+echo -e "${green}卡密校验成功！正在加载加密方案列表...${reset}"
+sleep 0.3
+echo ""
+
+echo -e "${cyan}══════════════════ 加密方案菜单 ══════════════════${reset}"
+echo ""
+echo -e "${yellow}▸ Root权限方案${reset}"
+echo -e "${purple}  [01]${reset} 二进制乱码加密"
+echo -e "${purple}  [02]${reset} 标记分割加密"
+echo -e "${purple}  [03]${reset} 变量加密"
+echo ""
+echo -e "${green}▸ 免Root加密方案${reset}"
+echo -e "${purple}  [04]${reset} 垃圾函数加密"
+echo -e "${purple}  [05]${reset} 多层嵌套循环加密"
+echo -e "${purple}  [06]${reset} 子shell嵌套回填加密"
+echo -e "${purple}  [07]${reset} 伪循环垃圾迭代加密"
+echo ""
+echo -e "${cyan}═══════════════════════════════════════════════════${reset}"
+echo -ne "${green}请输入方案编号：${reset}"
+read -r SEL
+
+if [ "$SEL" = "2" ];then
+    echo ""
+    echo -ne "${cyan}请输入要加密文件完整路径：${reset}"
+    read -r SRC_PATH
+
+    if [ ! -f "$SRC_PATH" ];then
+        echo -e "${red}此文件不存在！返回主菜单${reset}"
+        sleep 1.5
+        return
+    fi
+
+    TMP_GZ="/data/local/tmp/_gz_$$.tmp"
+    TMP_B64="/data/local/tmp/_b64_$$.tmp"
+    gzip -c "$SRC_PATH" > "$TMP_GZ"
+    base64 -w 76 "$TMP_GZ" > "$TMP_B64"
+
+    cat > "$SRC_PATH" <<'EOF'
+#!/system/bin/sh
+TMPDEC="/data/local/tmp/_dec_$$.sh"
+sed '1,/^#__DATA__/d' "$0" | base64 -d | gzip -d > "$TMPDEC"
+chmod 755 "$TMPDEC"
+sh "$TMPDEC"
+rm -f "$TMPDEC"
+exit 0
+#__DATA__
+EOF
+    cat "$TMP_B64" >> "$SRC_PATH"
+
+    chmod 755 "$SRC_PATH"
+    rm -f "$TMP_GZ" "$TMP_B64"
+
+    echo ""
+    echo -e "${green}加密执行完成！${reset}"
+    echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
+    echo -n "按任意键返回主菜单..."
+    read -n 1
+    return
+fi
+
+if [ "$SEL" = "3" ];then
+    echo ""
+    echo -ne "${cyan}请输入要加密文件完整路径：${reset}"
+    read -r SRC_PATH
+
+    if [ ! -f "$SRC_PATH" ];then
+        echo -e "${red}文件不存在，返回主菜单${reset}"
+        sleep 1.5
+        return
+    fi
+
+    TMPHEX="/data/local/tmp/_hex_$$.tmp"
+    xxd -p "$SRC_PATH" | tr -d '\n' > "$TMPHEX"
+    HEXDATA=$(cat "$TMPHEX")
+
+    cat > "$SRC_PATH" <<EOF
+#!/system/bin/sh
+# 小颜公益免费变量加密
+h="$HEXDATA"
+RAW=\$(echo "\$h" | xxd -r -p)
+eval "\$RAW"
+exit 0
+EOF
+    rm -f "$TMPHEX"
+    chmod 755 "$SRC_PATH"
+    echo ""
+    echo -e "${green}加密执行完成！${reset}"
+    echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
+    echo -n "按任意键返回主菜单..."
+    read -n 1
+    return
+fi
+
+# ==========4 垃圾函数加密【4星，三重base64+垃圾干扰函数】==========
+if [ "$SEL" = "4" ];then
+    echo ""
+    echo -ne "${cyan}请输入要加密文件完整路径：${reset}"
+    read -r SRC_PATH
+
+    if [ ! -f "$SRC_PATH" ];then
+        echo -e "${red}文件不存在，返回主菜单${reset}"
+        sleep 1.5
+        return
+    fi
+
+    RAW=$(cat "$SRC_PATH")
+    b1=$(printf "%s" "$RAW"|base64 -w0)
+    b2=$(printf "%s" "$b1"|base64 -w0)
+    b3=$(printf "%s" "$b2"|base64 -w0)
+    junk="s9k2x7q5"
+    mixed="${junk}${b3}${junk}"
+
+    cat > "$SRC_PATH" <<'LOADER'
+#!/system/bin/sh
+_f0(){ local a=0;return $a; }
+_f1(){ local b=1;return $b; }
+_f2(){ :; :; :; }
+_f3(){ echo "" >/dev/null; }
+_f4(){ read xxx </dev/null; }
+_f0;_f1;_f2;_f3;_f4
+
+__RAW_BUF="REPLACE_MIXED_DATA"
+JUNK_MARK="s9k2x7q5"
+
+strip_junk(){
+inp="$1"
+step1="${inp#$JUNK_MARK}"
+step2="${step1%$JUNK_MARK}"
+printf "%s" "$step2"
+}
+
+get_payload(){
+dat=$(strip_junk "$__RAW_BUF")
+l3=$(echo "$dat"|base64 -d)
+l2=$(echo "$l3"|base64 -d)
+l1=$(echo "$l2"|base64 -d)
+printf "%s" "$l1"
+}
+
+PAYLOAD=$(get_payload)
+eval "$PAYLOAD"
+exit $?
+LOADER
+
+sed -i "s|__RAW_BUF=\"REPLACE_MIXED_DATA\"|__RAW_BUF=\"${mixed}\"|" "$SRC_PATH"
+chmod 755 "$SRC_PATH"
+
+    echo ""
+    echo -e "${green}加密执行完成！${reset}"
+    echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
+    echo -n "按任意键返回主菜单..."
+    read -n 1
+    return
+fi
+
+# ==========5 多层嵌套循环加密【免root】四重base64嵌套eval==========
+if [ "$SEL" = "5" ];then
+    echo ""
+    echo -ne "${cyan}请输入要加密文件完整路径：${reset}"
+    read -r SRC_PATH
+
+    if [ ! -f "$SRC_PATH" ];then
+        echo -e "${red}文件不存在，返回主菜单${reset}"
+        sleep 1.5
+        return
+    fi
+
+    RAW=$(cat "$SRC_PATH")
+    e1=$(printf "%s" "$RAW" | base64 -w0)
+    e2=$(printf "%s" "$e1" | base64 -w0)
+    e3=$(printf "%s" "$e2" | base64 -w0)
+    e4=$(printf "%s" "$e3" | base64 -w0)
+
+    cat > "$SRC_PATH" <<'MULTI_LOADER'
+#!/system/bin/sh
+#小颜公益免费多层嵌套循环加密
+__dec(){
+d="$1"
+for _t in 1 2 3 4
+do
+d=$(printf "%s" "$d"|base64 -d 2>/dev/null)
+done
+printf "%s" "$d"
+}
+__X="REPLACE_NEST_DATA"
+__OUT=$(__dec "$__X")
+eval "$__OUT"
+exit $?
+MULTI_LOADER
+
+sed -i "s|__X=\"REPLACE_NEST_DATA\"|__X=\"${e4}\"|" "$SRC_PATH"
+chmod 755 "$SRC_PATH"
+
+    echo ""
+    echo -e "${green}加密执行完成！${reset}"
+    echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
+    echo -n "按任意键返回主菜单..."
+    read -n 1
+    return
+fi
+
+# ==========6 子shell嵌套回填加密（原9号）==========
+if [ "$SEL" = "6" ];then
+    echo ""
+    echo -ne "${cyan}请输入要加密文件完整路径：${reset}"
+    read -r SRC_PATH
+    if [ ! -f "$SRC_PATH" ];then
+        echo -e "${red}文件不存在，返回主菜单${reset}"
+        sleep 1.5
+        return
+    fi
+    RAW=$(cat "$SRC_PATH"|base64 -w0)
+    cat > "$SRC_PATH" <<'SUBSHELL_LOADER'
+#!/system/bin/sh
+#小颜公益免费子shell嵌套回填加密
+__inner(){
+local _z="REPLACE_SUB_SHELL_DATA"
+(
+echo "$_z"
+)
+}
+__outer(){
+local ret
+ret=$(__inner)
+echo "$ret"|base64 -d
+}
+eval "$(__outer)"
+exit $?
+SUBSHELL_LOADER
+sed -i "s|local _z=\"REPLACE_SUB_SHELL_DATA\"|local _z=\"${RAW}\"|" "$SRC_PATH"
+chmod 755 "$SRC_PATH"
+    echo ""
+    echo -e "${green}加密执行完成！${reset}"
+    echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
+    echo -n "按任意键返回主菜单..."
+    read -n 1
+    return
+fi
+
+# ==========7 伪循环垃圾迭代加密（原10号）==========
+if [ "$SEL" = "7" ];then
+    echo ""
+    echo -ne "${cyan}输入要加密文件完整路径：${reset}"
+    read -r SRC_PATH
+    if [ ! -f "$SRC_PATH" ];then
+        echo -e "${red}文件不存在，返回主菜单${reset}"
+        sleep 1.5
+        return
+    fi
+    RAW=$(cat "$SRC_PATH"|base64 -w0)
+    cat > "$SRC_PATH" <<'FAKELOOP_LOADER'
+#!/system/bin/sh
+#小颜公益免费伪循环垃圾迭代加密
+_buf=""
+_payload="REPLACE_FAKE_LOOP_DATA"
+for t in 1 2 3 4 5;do
+    : dummy iter
+    if [ $t -eq 3 ];then
+        _buf="$_payload"
+    fi
+done
+__run(){
+echo "$_buf"|base64 -d
+}
+eval "$(__run)"
+exit $?
+FAKELOOP_LOADER
+sed -i "s|_payload=\"REPLACE_FAKE_LOOP_DATA\"|_payload=\"${RAW}\"|" "$SRC_PATH"
+chmod 755 "$SRC_PATH"
+    echo ""
+    echo -e "${green}加密执行完成！${reset}"
+    echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
+    echo -n "按任意键返回主菜单..."
+    read -n 1
+    return
+fi
+
+#二进制乱码加密逻辑
+if [ "$SEL" != "1" ];then
+    echo -e "${red}输入无效，返回主菜单${reset}"
+    sleep 1.5
+    return
+fi
+
+echo ""
+echo -ne "${cyan}请输入要加密文件完整路径：${reset}"
+read -r SRC_PATH
+
+if [ ! -f "$SRC_PATH" ];then
+    echo -e "${red}文件不存在，返回主菜单${reset}"
+    sleep 1.5
+    return
+fi
+
+TMP_GZ="/data/local/tmp/_gz_$$.tmp"
+gzip -c "$SRC_PATH" > "$TMP_GZ"
+
+cat > "$SRC_PATH" <<'EOF'
+#!/system/bin/sh
+TMPDEC="/data/local/tmp/_dec_$$.sh"
+sed '1,/^#__DATA__/d' "$0" | gzip -d > "$TMPDEC"
+chmod 755 "$TMPDEC"
+sh "$TMPDEC"
+rm -f "$TMPDEC"
+exit 0
+#__DATA__
+EOF
+cat "$TMP_GZ" >> "$SRC_PATH"
+
+chmod 755 "$SRC_PATH"
+rm -f "$TMP_GZ"
+
+echo ""
+echo -e "${green}加密任务执行完成！${reset}"
+echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
+echo -n "按任意键返回主菜单..."
+read -n 1
+}
+
+# =================================================================
+# 內嵌檢測腳本：先 Inte.ko，再遠控木馬 IOC 掃描
+# =================================================================
+run_embedded_scan() {
+    scan_name="$1"
+    scan_body="$2"
+    scan_tmp="/data/local/tmp/.root_collection_${scan_name}_$$.sh"
+    if ! (umask 077; : > "$scan_tmp") 2>/dev/null; then
+        echo -e "${RED}[錯誤] 無法建立暫存檔：$scan_tmp${NC}"
+        return 1
+    fi
+    printf '%s\n' "$scan_body" > "$scan_tmp"
+    chmod 700 "$scan_tmp" 2>/dev/null
+    sh "$scan_tmp"
+    scan_rc=$?
+    rm -f "$scan_tmp"
+    return "$scan_rc"
+}
+
+run_security_scans() {
+    show_header
+    echo -e "${YELLOW}=== 綜合安全檢測 ===${NC}"
+    echo "執行順序：1. 歐加 Inte.ko 檢測  2. DeviceHub 遠控病毒 IOC 檢測"
+    echo "檢測腳本以唯讀方式執行；不會自動清除檔案或終止程序。"
+    echo "-------------------------------------------------"
+    echo -e "${CYAN}[1/2] 開始歐加反作弊 Inte.ko 檢測...${NC}"
+    run_embedded_scan "inteko" "$INTEKO_SCAN"
+    inte_rc=$?
+    echo
+    echo -e "${CYAN}[2/2] 開始遠控病毒檢測...${NC}"
+    run_embedded_scan "devicehub" "$DEVICEHUB_SCAN"
+    devicehub_rc=$?
+    echo
+    echo "-------------------------------------------------"
+    echo "檢測流程完成。Inte.ko 狀態碼：$inte_rc；遠控檢測狀態碼：$devicehub_rc"
+    echo -n "按任意鍵返回主選單..."
+    IFS= read -r -n 1 _key
+    echo
+}
+
+INTEKO_SCAN=$(cat <<'__INTEKO_SCAN_EOF__'
+set -eu
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+R=$(printf '\033[0;31m'); G=$(printf '\033[0;32m')
+Y=$(printf '\033[1;33m'); B=$(printf '\033[1;36m'); N=$(printf '\033[0m')
+PASS=0; WARN=0; FAIL=0; SKIP=0; TOTAL=0
+_pass()  { PASS=$((PASS+1)); TOTAL=$((TOTAL+1)); printf "  ${GREEN}[PASS]${NC} %s\n" "$1"; }
+_warn()  { WARN=$((WARN+1)); TOTAL=$((TOTAL+1)); printf "  ${YELLOW}[WARN]${NC} %s\n" "$1"; }
+_fail()  { FAIL=$((FAIL+1)); TOTAL=$((TOTAL+1)); printf "  ${RED}[FAIL]${NC} %s\n" "$1"; }
+_skip()  { SKIP=$((SKIP+1)); TOTAL=$((TOTAL+1)); printf "  ${WHITE}[SKIP]${NC} %s\n" "$1"; }
+_info()  { printf "  ${CYAN}  >${NC} %s\n" "$1"; }
+_hdr()   { echo ""; sleep 1 ; echo "==================================================";  echo "  $1"; echo "=================================================="; sleep 0; }
+_sub()   { echo ""; echo "-- $1 --"; }
+
+    echo
+    printf "$G"
+    cat <<'MAPLE_BANNER'
+███╗   ███╗ █████╗ ██████╗ ██╗     ███████╗
+████╗ ████║██╔══██╗██╔══██╗██║     ██╔════╝
+██╔████╔██║███████║██████╔╝██║     █████╗
+██║╚██╔╝██║██╔══██║██╔═══╝ ██║     ██╔══╝
+██║ ╚═╝ ██║██║  ██║██║     ███████╗███████╗
+╚═╝     ╚═╝╚═╝  ╚═╝╚═╝     ╚══════╝╚══════╝
+MAPLE_BANNER
+    printf "$N\n"
+    printf "$B━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$N\n"
+    printf "$B  MAPLE · Inte.ko模块检测$N\n"
+    printf "\n$B  『时光流转，愿你能与珍爱之人再度重逢』🍁$N\n\n"
+    printf "$B  By.MapleAutumn 交流群 757313825$N\n"
+    printf "$B━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$N\n"
+    sleep 1
+echo "── 内核检测状态 ──"
+echo
+
+for p in /proc/inte_ko /proc/inte_systbl /proc/inte_status; do
+    if ls -ld "$p" >/dev/null 2>&1; then
+        echo "[存在] $p"
+    else
+        echo "[不存在] $p（不存在或访问受限）"
+    fi
+done
+
+echo
+echo "── 模块状态 ──"
+if cat /proc/modules 2>/dev/null | grep -q '^inte '; then
+    echo "[确认] inte 模块已加载 欧加KO反作弊已内置"
+    sleep 3
+
+    sleep 0.8
+
+else
+    echo "[不存在] 不存在或未找到模块记录 未内置驱动反作弊"
+    
+fi
+__INTEKO_SCAN_EOF__
+)
+
+DEVICEHUB_SCAN=$(cat <<'__DEVICEHUB_SCAN_EOF__'
+
+if [ ! -t 1 ]; then
+  R=''; M=''; C=''; B=''; G=''; Y=''; E=''
+else
+  R='\033[0m'; M='\033[1;35m'; C='\033[1;36m'; B='\033[1;34m'
+  G='\033[1;32m'; Y='\033[1;33m'; E='\033[1;31m'
+fi
+CUR="INIT"
+sec()  { CUR="$1"; printf '\n%b===== %s : %s =====%b\n' "$C" "$1" "$2" "$R"; }
+info() { printf '%b[INFO]%b [%s] %s\n' "$B" "$R" "$CUR" "$1"; }
+ok()   { printf '%b[ OK ]%b [%s] %s\n' "$G" "$R" "$CUR" "$1"; }
+warn() { printf '%b[WARN]%b [%s] %s\n' "$Y" "$R" "$CUR" "$1"; }
+hit()  { printf '%b[HIT!]%b [%s] %s\n' "$E" "$R" "$CUR" "$1"; }
+
+have(){ command -v "$1" >/dev/null 2>&1; }
+
+# ---------- IOC（全部来自逆向报告）----------
+HASH_MAIN='3c91e2e66cc2e480428da3e120467b085f019cfd20c988b766d584c7df7a835d'
+HASH_ACE='8ea955c6c7001223593858d75aaaf9bb61ef2c0f0cd85f160f44f70c5fe891dc'
+PKG_AGENT='com.devicehub.agent'
+PKG_ACE='com.mycompany.myapp'
+ACE_COMP='com.mycompany.myapp.a'
+C2_DOMAIN='360nb.top'          # 辅助证据，原逆向报告未直接给出，来源存疑
+
+PROC_RE='devicehub-device|devicehub_inject|devicehub-agent|devicehub-watchdog|devicehub-app-supervisor|devicehub-root-supervisor|devicehub-rootctl|devicehub-account|devicehub-screen\.jar|/data/system/devicehub|com\.devicehub\.agent'
+ENV_RE='DH_APP_PORT|DH_MANAGED_ROOT_DIR|DH_MODULE_DIR|DH_DEVICE_BIN|DH_STATE_PATH|DH_APP_PACKAGE|DEVICEHUB_PROTOCOL_VECTORS'
+
+DIR_IOC='/data/system/devicehub /devicehub-media'
+
+FILE_IOC='/data/system/devicehub/devicehub-device
+/data/system/devicehub/devicehub-device.json
+/data/system/devicehub/devicehub-device.log
+/data/system/devicehub/agent-install.log
+/data/system/devicehub/devicehub-watchdog.pid
+/data/system/devicehub/app-first-install
+/data/adb/service.d/devicehub-agent.sh
+/data/adb/service.d/devicehub-agent-extras.sh
+/devicehub-screen.jar
+/devicehub-live.pid
+/devicehub-account.sh
+/devicehub-rootctl.sh
+/devicehub-watchdog.sh
+/devicehub-app-supervisor.sh
+/devicehub-root-supervisor.sh
+/devicehub-managed-root-common.sh
+/devicehub-managed-root-lock.sh
+/devicehub_inject
+/devicehub_inject.sh
+/sdcard/devicehub-agent.apk
+/data/local/tmp/devicehub-device
+/data/local/tmp/devicehub_inject
+/module.id'
+
+# 运行时临时文件（安全通配，循环内 [ -e ]/[ -L ] || continue）
+FILE_GLOB='/devicehub_screen_*
+/devicehub_record_*
+/devicehub_cmd_*.sh'
+
+# 目录通配（staging / 模块）
+DIR_GLOB='/devicehub_managed_*
+/data/adb/*devicehub*
+/data/adb/modules/*devicehub*'
+
+# 系统分区残留
+SYS_SUSPECT='/system/bin/devicehub-device
+/system/bin/devicehub-watchdog
+/system/xbin/devicehub-device
+/system/xbin/devicehub-watchdog
+/system/etc/devicehub-agent.sh
+/system/etc/devicehub-watchdog.sh
+/vendor/bin/devicehub-device
+/vendor/bin/devicehub-watchdog'
+
+# appops 七项（报告明确）
+APPOP_KEYS='CAMERA|READ_SMS|MANAGE_EXTERNAL_STORAGE|WAKE_LOCK|RUN_IN_BACKGROUND|RUN_ANY_IN_BACKGROUND|START_FOREGROUND'
+
+# ---------- 判定计数 ----------
+C_CONF=0; C_SUS=0; C_RES=0
+R_CONF=""; R_SUS=""; R_RES=""
+conf(){ C_CONF=$((C_CONF+1)); R_CONF="$R_CONF
+  - $1"; }
+sus() { C_SUS=$((C_SUS+1));   R_SUS="$R_SUS
+  - $1"; }
+res() { C_RES=$((C_RES+1));   R_RES="$R_RES
+  - $1"; }
+
+# ---------- 哈希 ----------
+sha_of(){
+  if have sha256sum; then sha256sum "$1" 2>/dev/null | awk '{print $1}'
+  elif have toybox; then toybox sha256sum "$1" 2>/dev/null | awk '{print $1}'; fi
+}
+check_hash(){
+  [ -f "$1" ] && [ ! -L "$1" ] || return 2
+  _h=$(sha_of "$1"); [ -n "$_h" ] || return 3
+  [ "$_h" = "$2" ] && return 0; return 1
+}
+
+SELF=$(readlink -f "$0" 2>/dev/null); [ -n "$SELF" ] || SELF="$0"
+
+# ============================================================
+# 作者/频道信息（base64 编码）
+# ============================================================
+ENCODED_TG_URL="dGc6Ly9yZXNvbHZlP2RvbWFpbj1BU0RLODg2JnBvc3Q9Ng=="
+ENCODED_WEB_URL="aHR0cHM6Ly90Lm1lL0FTREs4ODY="
+
+TELEGRAM_URL=""
+WEB_URL=""
+if have base64; then
+  TELEGRAM_URL=$(printf '%s' "$ENCODED_TG_URL" | base64 -d 2>/dev/null)
+  WEB_URL=$(printf '%s' "$ENCODED_WEB_URL" | base64 -d 2>/dev/null)
+fi
+[ -n "$TELEGRAM_URL" ] || TELEGRAM_URL='tg://resolve?domain=aadaili&post=6'
+[ -n "$WEB_URL" ]      || WEB_URL='https://t.me/aadaili'
+
+# ---------- 三行彩色提醒 ----------
+show_reminders(){
+  printf '\n'
+  printf '%b  [!] 重要提醒：本脚本仅用于安全检测与学习研究，严禁用于非法侵入、监控他人设备 %b\n' "$E" "$R"
+  printf '%b  [!] 免责声明：检测结果仅供参考，最终判定请结合人工分析与官方安全工具二次确认 %b\n' "$Y" "$R"
+  printf '%b  [OK] 泛滥频道:@ASDK886   |   反馈与更新：%s %b\n' "$G" "$WEB_URL" "$R"
+  printf '\n'
+}
+
+# ============================================================
+# 环境自检
+# ============================================================
+printf '%b' "$M"
+cat <<EOF
+############################################################
+#  DeviceHub / 平安远控  纯检测 v11（只读 · 零修改）
+#  UID: $(id -u 2>/dev/null)    SELinux: $(getenforce 2>/dev/null || echo '?')
+#  检测范围: 仅逆向确认的精确 IOC，不扫描用户目录
+#  行为范围: 不删除 / 不终止 / 不修改系统设置 / 不卸载 / 不落盘
+############################################################
+EOF
+printf '%b' "$R"
+
+IS_ROOT=0
+[ "$(id -u 2>/dev/null)" = "0" ] && IS_ROOT=1
+if [ "$IS_ROOT" = "1" ]; then
+  ok "以 root 运行，可读取全部受保护路径与进程信息"
+else
+  warn "非 root 运行：/data/system/* 与跨应用 /proc 信息不可见，可能漏检"
+  warn "建议: su -c 'sh $SELF'"
+fi
+
+# ---------- 三行彩色提醒 ----------
+show_reminders
+
+# ============================================================
+# 段 A：文件与目录 IOC
+# ============================================================
+sec "A" "文件/目录 IOC（精确路径 + 安全通配）"
+for d in $DIR_IOC; do
+  if [ -d "$d" ] || [ -L "$d" ]; then
+    hit "目录: $d"
+    if [ -f "$d/devicehub-device" ] || [ -f "$d/devicehub-device.json" ]; then
+      conf "木马状态目录: $d（含密钥/状态文件）"
+    else
+      res "残留目录: $d（无核心文件，历史痕迹）"
+    fi
+  fi
+done
+for f in $FILE_IOC; do
+  if [ -e "$f" ] || [ -L "$f" ]; then
+    hit "文件: $f"
+    case "$f" in
+      /data/system/devicehub/devicehub-device|\
+      /devicehub_inject|\
+      /devicehub-screen.jar|\
+      /data/adb/service.d/devicehub-agent*.sh)
+        conf "核心载荷/持久化: $f" ;;
+      /module.id)
+        info "可疑标记文件: $f（低置信，需人工确认来源）" ;;
+      *)
+        res "残留文件: $f" ;;
+    esac
+  fi
+done
+# 安全通配
+for f in $FILE_GLOB; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  hit "运行时文件: $f"
+  res "运行时临时文件: $f（木马执行痕迹）"
+done
+for f in $DIR_GLOB; do
+  [ -d "$f" ] || [ -L "$f" ] || continue
+  hit "通配目录: $f"
+  res "通配目录残留: $f"
+done
+# service.d 通配
+for f in /data/adb/service.d/devicehub-agent-*.sh; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  hit "service.d 自启: $f"
+  conf "service.d 自启脚本: $f"
+done
+
+# ============================================================
+# 段 B：SHA-256 精确比对（静态路径，运行时路径由段 C 兜底）
+# ============================================================
+sec "B" "SHA-256 静态比对（主 ELF / ACE APK）"
+for f in \
+  /data/system/devicehub/devicehub-device \
+  /data/local/tmp/devicehub-device \
+  /data/adb/devicehub-device \
+  /system/bin/devicehub-device \
+  /system/xbin/devicehub-device
+do
+  [ -f "$f" ] || continue
+  check_hash "$f" "$HASH_MAIN"; rc=$?
+  if [ "$rc" = "0" ]; then
+    hit "SHA-256 匹配主 ELF: $f"; conf "主 ELF 精确匹配: $f"
+  elif [ "$rc" = "1" ]; then
+    warn "同名异 hash（疑似变种）: $f"; sus "疑似变种: $f"
+  fi
+done
+for f in /sdcard/devicehub-agent.apk; do
+  [ -f "$f" ] || continue
+  check_hash "$f" "$HASH_ACE"; rc=$?
+  if [ "$rc" = "0" ]; then
+    hit "SHA-256 匹配 ACE APK: $f"; conf "ACE APK 精确匹配: $f"
+  elif [ "$rc" = "1" ]; then
+    warn "同名异 hash: $f"; sus "疑似变种 ACE: $f"
+  fi
+done
+
+# ============================================================
+# 段 C：活跃进程（cmdline + exe hash + environ 注入）
+# ============================================================
+sec "C" "活跃恶意进程（cmdline / exe hash / environ）"
+_p(){ sed -n 's/^PPid:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$1/status" 2>/dev/null | head -n1; }
+SKIP=" "; _cur=$$; _d=0
+while [ -n "$_cur" ] && [ "$_cur" != "0" ] && [ "$_cur" != "1" ] && [ "$_d" -lt 64 ]; do
+  SKIP="$SKIP$_cur "
+  _n=$(_p "$_cur")
+  if [ -z "$_n" ] || [ "$_n" = "$_cur" ]; then break; fi
+  _cur=$_n; _d=$((_d+1))
+done
+
+PIDS=""
+for cf in /proc/[0-9]*/cmdline; do
+  [ -r "$cf" ] || continue
+  grep -qaE "$PROC_RE" "$cf" 2>/dev/null || continue
+  pid=${cf#/proc/}; pid=${pid%/cmdline}
+  case "$SKIP" in *" $pid "*) continue;; esac
+  c=$(tr '\0' ' ' < "$cf" 2>/dev/null | tr -d '\r\n')
+  [ -n "$SELF" ] && case "$c" in *"${SELF##*/}"*) continue;; esac
+  PIDS="$PIDS $pid"
+done
+
+if [ -n "$PIDS" ]; then
+  for pid in $PIDS; do
+    c=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | tr -d '\r\n')
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null)
+    hit "PID=$pid EXE=$exe CMD=[$c]"
+    conf "活跃进程 PID=$pid: $c"
+
+    case "$exe" in
+      *"(deleted)"*)
+        sus "PID=$pid exe 已删除（反取证）: $exe" ;;
+      /*)
+        if [ -f "$exe" ]; then
+          check_hash "$exe" "$HASH_MAIN"; rc=$?
+          if [ "$rc" = "0" ]; then
+            conf "PID=$pid exe SHA-256 精确匹配主 ELF"
+          elif [ "$rc" = "1" ]; then
+            sus "PID=$pid exe 同路径异 hash（疑似变种）"
+          fi
+        fi
+        ;;
+    esac
+
+    if [ -r "/proc/$pid/environ" ]; then
+      envs=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -aE "^($ENV_RE)=" )
+      if [ -n "$envs" ]; then
+        hit "PID=$pid 注入环境变量:"
+        printf '%s\n' "$envs" | while read -r l; do printf '         %s\n' "$l"; done
+        conf "PID=$pid 含 DeviceHub 注入环境变量"
+      fi
+    fi
+  done
+else
+  ok "无活跃恶意进程"
+fi
+
+# ============================================================
+# 段 D：已装包（含状态变量，供段 E 使用）
+# ============================================================
+sec "D" "已装包检测"
+AGENT_INSTALLED=0
+ACE_HASH_MATCH=0
+
+if pm list packages 2>/dev/null | grep -Fqx "package:$PKG_AGENT"; then
+  AGENT_INSTALLED=1
+  apath=$(pm path "$PKG_AGENT" 2>/dev/null | sed -n 's/^package://p' | head -n1)
+  hit "已装 $PKG_AGENT -> ${apath:-未知}"
+  sus "已装主控包 $PKG_AGENT（专属包名，几乎可确证）"
+  if have dumpsys; then
+    comp=$(dumpsys package "$PKG_AGENT" 2>/dev/null | grep -E 'WakeReceiver|AgentService' | head -n4)
+    if [ -n "$comp" ]; then
+      printf '%s\n' "$comp" | while read -r l; do printf '         %s\n' "$l"; done
+      sus "已装包含 .WakeReceiver/.AgentService 组件（报告明确）"
+    fi
+  fi
+else
+  ok "未装 $PKG_AGENT"
+fi
+
+if pm list packages 2>/dev/null | grep -Fqx "package:$PKG_ACE"; then
+  apath=$(pm path "$PKG_ACE" 2>/dev/null | sed -n 's/^package://p' | head -n1)
+  apk=${apath#package:}
+  if [ -n "$apk" ]; then
+    check_hash "$apk" "$HASH_ACE"; rc=$?
+    if [ "$rc" = "0" ]; then
+      ACE_HASH_MATCH=1
+      hit "已装 ACE 且 hash 匹配 -> $apath"
+      conf "ACE APK hash 匹配: $PKG_ACE"
+    elif [ "$rc" = "1" ]; then
+      info "已装 $PKG_ACE，但 hash 不匹配 ACE 样本（可能是正常应用，不处理）"
+    fi
+  fi
+else
+  ok "未装 $PKG_ACE"
+fi
+
+# ============================================================
+# 段 E：系统设置篡改（只读）
+# ============================================================
+sec "E" "系统设置篡改（accessibility / deviceidle / stay_on / appops）"
+
+AC=$(settings get secure enabled_accessibility_services 2>/dev/null)
+AC_EN=$(settings get secure accessibility_enabled 2>/dev/null)
+case "$AC" in
+  *"$ACE_COMP"*)
+    hit "无障碍注入: $ACE_COMP"
+    if [ "$ACE_HASH_MATCH" = "1" ]; then
+      conf "无障碍服务被注入 ACE 组件（且 ACE hash 已确诊）"
+    else
+      info "无障碍服务含 $ACE_COMP，但 ACE hash 未匹配样本（可能是同名正常应用）"
+    fi
+    [ "$AC_EN" = "1" ] && sus "accessibility_enabled=1（服务实际启用）" \
+                        || info "accessibility_enabled=$AC_EN（服务开关未开）"
+    ;;
+  *) ok "无障碍未含 ACE";;
+esac
+
+DW=$(dumpsys deviceidle whitelist 2>/dev/null | grep -iE 'devicehub|mycompany')
+if [ -n "$DW" ]; then
+  printf '%s\n' "$DW" | while read -r l; do hit "白名单: $l"; done
+  sus "deviceidle 白名单含 devicehub/mycompany"
+else
+  ok "白名单未含目标"
+fi
+
+SW=$(settings get global stay_on_while_plugged_in 2>/dev/null)
+case "$SW" in
+  -1|3|7) hit "屏幕常亮被篡改: $SW"
+          res "stay_on_while_plugged_in=$SW（木马或用户偏好均可能）";;
+  *) ok "屏幕常亮正常 (=$SW)";;
+esac
+
+if [ "$AGENT_INSTALLED" = "1" ]; then
+  AOP=""
+  if have appops; then
+    AOP=$(appops get "$PKG_AGENT" 2>/dev/null)
+  elif have cmd; then
+    AOP=$(cmd appops get "$PKG_AGENT" 2>/dev/null)
+  fi
+  if [ -n "$AOP" ]; then
+    AHIT=$(printf '%s\n' "$AOP" | grep -iE "$APPOP_KEYS" | grep -iE 'allow')
+    if [ -n "$AHIT" ]; then
+      printf '%s\n' "$AHIT" | while read -r l; do hit "appops: $l"; done
+      sus "appops 含报告所列七项权限（被授权）"
+    else
+      ok "appops 未发现七项被授权"
+    fi
+  else
+    info "appops 不可读（无权限或版本差异）"
+  fi
+else
+  info "跳过 appops（$PKG_AGENT 未安装）"
+fi
+
+# ============================================================
+# 段 F：网络与本地后门
+# ============================================================
+sec "F" "网络连接与 8080 回环后门"
+
+NB=""
+for cf in /proc/[0-9]*/cmdline; do
+  [ -r "$cf" ] || continue
+  grep -qa "$C2_DOMAIN" "$cf" 2>/dev/null || continue
+  pid=${cf#/proc/}; pid=${pid%/cmdline}
+  c=$(tr '\0' ' ' < "$cf" 2>/dev/null | tr -d '\r\n')
+  NB="$NB PID=$pid:$c"
+done
+if [ -n "$NB" ]; then
+  hit "cmdline 含 $C2_DOMAIN:$NB"
+  sus "进程 cmdline 出现 $C2_DOMAIN（辅助证据）"
+else
+  ok "cmdline 未含 $C2_DOMAIN"
+fi
+
+if have ss; then
+  NL=$(ss -tnp 2>/dev/null | grep -i 'devicehub')
+elif have netstat; then
+  NL=$(netstat -anp 2>/dev/null | grep -i 'devicehub')
+else
+  NL=""
+fi
+if [ -n "$NL" ]; then
+  printf '%s\n' "$NL" | while read -r l; do hit "连接: $l"; done
+  res "存在 devicehub 相关连接"
+else
+  ok "无 devicehub 相关连接"
+fi
+
+if have getent && [ -r /proc/net/tcp ]; then
+  C2_IPS=$( (have timeout && timeout 3 getent hosts "$C2_DOMAIN") 2>/dev/null \
+            || getent hosts "$C2_DOMAIN" 2>/dev/null | awk '{print $1}' | head -n 4 )
+  if [ -n "$C2_IPS" ]; then
+    for ip in $C2_IPS; do
+      hex=$(printf '%s\n' "$ip" | awk -F. 'NF==4{sprintf "%02X%02X%02X%02X",$4,$3,$2,$1}')
+      [ -n "$hex" ] || continue
+      if awk -v h="$hex" '$3==h && $4=="01"{f=1} END{exit !f}' /proc/net/tcp 2>/dev/null; then
+        hit "存在到 $C2_DOMAIN($ip) 的已建立 TCP 连接"
+        sus "已连接 $C2_DOMAIN($ip)（辅助证据）"
+      fi
+    done
+  else
+    info "$C2_DOMAIN 无法解析（无 DNS/无网络），跳过 IP 比对"
+  fi
+else
+  info "getent 不可用或 /proc/net/tcp 不可读，跳过 $C2_DOMAIN IP 比对"
+fi
+
+if [ -r /proc/net/tcp ] && awk '$2=="0100007F:1F90" && $4=="0A"{f=1} END{exit !f}' /proc/net/tcp 2>/dev/null; then
+  hit "IPv4 回环后门 127.0.0.1:8080 LISTEN"
+  conf "本地后门监听: 127.0.0.1:8080"
+else
+  ok "无 IPv4 127.0.0.1:8080"
+fi
+if [ -r /proc/net/tcp6 ] && awk '$2=="00000000000000000000000001000000:1F90" && $4=="0A"{f=1} END{exit !f}' /proc/net/tcp6 2>/dev/null; then
+  hit "IPv6 回环后门 [::1]:8080 LISTEN"
+  conf "本地后门监听: [::1]:8080"
+else
+  ok "无 IPv6 [::1]:8080"
+fi
+
+# ============================================================
+# 段 G：SELinux
+# ============================================================
+sec "G" "SELinux 状态"
+S=$(getenforce 2>/dev/null)
+[ -z "$S" ] && S=$(cat /sys/fs/selinux/enforce 2>/dev/null | sed 's/^1$/Enforcing/;s/^0$/Permissive/')
+case "$S" in
+  Permissive|0) hit "SELinux=Permissive"
+                sus "SELinux=Permissive（可能被篡改，也可能是开发配置）";;
+  Enforcing|1)  ok "SELinux=Enforcing";;
+  *)            info "SELinux 状态未知";;
+esac
+
+# ============================================================
+# 段 H：系统分区残留
+# ============================================================
+sec "H" "系统分区残留（rm 无法根治）"
+SYS_HIT=0
+for f in $SYS_SUSPECT; do
+  if [ -e "$f" ] || [ -L "$f" ]; then
+    SYS_HIT=1
+    hit "系统分区: $f"
+    conf "系统分区存在 devicehub: $f（必须刷官方固件对应分区）"
+  fi
+done
+if [ "$SYS_HIT" = "0" ]; then ok "系统分区未见 devicehub*"; fi
+
+# ============================================================
+# 判定结论
+# ============================================================
+printf '\n%b' "$M"
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║                        检测结论                              ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+printf '%b' "$R"
+
+printf '  确诊指标 : %d 项\n' "$C_CONF"
+printf '  疑似指标 : %d 项\n' "$C_SUS"
+printf '  残留指标 : %d 项\n' "$C_RES"
+
+if [ "$C_CONF" -gt 0 ]; then
+  printf '\n%b>>> 结论：已确诊感染 DeviceHub / 平安远控木马 <<<%b\n' "$E" "$R"
+  printf '%b确诊依据:%b%s\n' "$E" "$R" "$R_CONF"
+  cat <<'ADV'
+
+处置建议（需 root，按序执行）：
+  1. 立即断网（飞行模式 + 关 WiFi/移动数据），阻止 C2 下发新指令
+  2. 备份重要数据到外部存储（照片、文档、聊天记录）
+  3. 按序清除：
+     ① 删 /data/adb/service.d/devicehub-agent*.sh（先断持久化）
+     ② SIGSTOP 冻结恶意进程，chmod 000 主 ELF，再 SIGKILL
+     ③ pm uninstall com.devicehub.agent
+     ④ 恢复无障碍/appops/deviceidle/stay_on 设置
+     ⑤ rm -rf /data/system/devicehub /devicehub_* /devicehub_inject*
+  4. 若段 H 报告系统分区存在 —— rm 无法根治，必须刷官方固件对应分区
+  5. 若段 C 报告 sh/app_process 寄宿进程 —— 木马利用解释器寄生，需重启后复查
+  6. 清除后重启，重新跑本检测确认干净
+
+强烈建议：因该木马具备远程 shell、拍照、短信、无障碍注入、root 托管更新等
+完整 RAT 能力，处置后应立刻修改微信/QQ/支付宝/银行账号密码。
+ADV
+  RC=2
+
+elif [ "$C_SUS" -gt 0 ]; then
+  printf '\n%b>>> 结论：高度疑似感染（需人工确认）<<<%b\n' "$Y" "$R"
+  printf '%b疑似依据:%b%s\n' "$Y" "$R" "$R_SUS"
+  cat <<'ADV'
+
+处置建议：
+  1. 逐条核对上述疑似项，确认是否为你主动安装/配置
+     - com.devicehub.agent 若确实装过（极不可能），卸载即可
+     - 无障碍含 com.mycompany.myapp.a：确认是你的应用还是陌生应用
+       （若段 D 已报 ACE hash 匹配，则直接按确诊处理）
+     - SELinux=Permissive：确认是否你手动设置过
+     - appops 七项：确认是否为该包主动申请且你授权
+  2. 复查精确 IOC 文件是否散落在其他位置
+  3. 建议同时检查：最近安装应用列表、电池耗电排行、无障碍服务列表
+  4. 若无法解释上述疑似项，按"确诊"流程处置
+ADV
+  RC=1
+
+elif [ "$C_RES" -gt 0 ]; then
+  printf '\n%b>>> 结论：可疑残留（历史感染痕迹）<<<%b\n' "$Y" "$R"
+  printf '%b残留依据:%b%s\n' "$Y" "$R" "$R_RES"
+  cat <<'ADV'
+
+处置建议：
+  1. 残留说明木马曾运行过但已被部分清除，或已被其他工具清理
+  2. 检查 /data/system/devicehub 是否为空目录（空目录可安全删除）
+  3. 若仅 stay_on_while_plugged_in 命中，可能只是用户偏好，无需处理
+  4. 若段 H 报告系统分区存在，务必刷官方固件对应分区
+  5. 重启后重跑本检测，若无残留且无活跃进程，视为已清理
+ADV
+  RC=1
+
+else
+  printf '\n%b>>> 结论：未发现 DeviceHub / 平安远控 感染痕迹 <<<%b\n' "$G" "$R"
+  cat <<'ADV'
+
+无需处理。若仍有安全顾虑，可：
+  1. 确认最近未安装来源不明的 APK
+  2. 检查无障碍服务列表中是否有陌生组件
+  3. 定期审查 /data/adb/service.d（root 用户）下是否有陌生自启脚本
+ADV
+  RC=0
+fi
+
+exit $RC
+__DEVICEHUB_SCAN_EOF__
+)
+
+
 # =================================================================
 # 系統主選單迴圈 (已置於最底部，保證所有函數都已提前載入)
 # =================================================================
@@ -505,9 +1615,11 @@ while true; do
     echo -e " 7）  進入：四大 Root 面具大本營 (阿爾法/SK/KSU/AP)"
     echo -e " 8)  進入：高級 Magisk / KSU 玩機模組分類庫"
     echo -e " 9)  進入：硬核玩機 Root_Tools_Pack 工具箱"
-    echo -e " 10) 安全退出工具箱"
+    echo -e " 10) 綜合安全檢測（Inte.ko + 遠控病毒）"
+    echo -e " 11) shell腳本混淆"
+    echo -e " 12) 安全退出工具箱"
     echo "-------------------------------------------------"
-    echo -n "請輸入數字 (1-10): "
+    echo -n "請輸入數字 (1-12): "
     read main_choice
     
     main_choice=$(echo "$main_choice" | tr -d '\r\n\t ')
@@ -693,7 +1805,9 @@ read -n 1
            7) root_mask_menu ;;
            8) advanced_modules_menu ;;
            9) root_tools_pack_menu ;;
-          10) echo "已安全退出頂級搞機軍火庫。"; exit 0 ;;
+          10) run_security_scans ;;
+          11) shell_obfuscation;;
+          12) echo "已安全退出頂級搞機軍火庫。"; exit 0 ;;
 *) echo -e "${RED}無效輸入！您的輸入為: [$main_choice]${NC}" ; sleep 1.5 ;;
 esac
 done
