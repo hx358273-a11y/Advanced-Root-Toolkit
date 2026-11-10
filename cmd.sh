@@ -301,7 +301,7 @@ check_seccomp() {
     SECCOMP_STATUS=$(awk '/^Seccomp:/ {print $2; exit}' "/proc/$$/status" 2>/dev/null)
 
     if [ "$SECCOMP_STATUS" = "2" ]; then
-        echo -e "${GREEN}[核心狀態] 目前腳本進程 Seccomp: Filter (2)過濾器模式（此腳本將受到Seccomp影響，但大部分功能展示可用）${NC}"
+        echo -e "${GREEN}[核心狀態] 目前腳本進程 Seccomp: Filter (2)過濾器模式（此腳本將受到Seccomp影響，但大部分功能暫時可用）${NC}"
     elif [ "$SECCOMP_STATUS" = "1" ]; then
         echo -e "${YELLOW}[核心狀態] 目前腳本進程 Seccomp: Strict (1)嚴格模式（此進程將受到Seccomp過濾影響，只能呼叫 read、write、_exit 和 sigreturn 這些函數）${NC}"
     elif [ "$SECCOMP_STATUS" = "0" ]; then
