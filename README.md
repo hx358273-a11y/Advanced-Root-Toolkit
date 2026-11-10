@@ -1,42 +1,84 @@
 # 🛠️ Advanced-Root-Toolkit (進階 ROOT 軍火庫)
 
-![GitHub release (latest by date)](https://shields.io)
-
-歡迎來到由 **抖音user哥** 維持維護的進階 Android Root 資產存檔庫。本專案專為 Android 進階玩家與環境調校開發者打造，集成了歷史、主流及前沿的完整 Root 工具鏈與自動化腳本。
+🚀 **The ultimate interactive terminal control panel & asset repository tailormade for Android power users, kernel adjusters, and root environment developers.**  
+🚀 **專為 Android 進階玩家、內核調校開發者打造的互動式終端控制台與自動化防線軍火庫。**
 
 ---
 
-## 🚀 核心功能與內置資產
+## 🌟 Overview / 專案簡介
 
-### 📂 1. 互動式終端工具箱 (`cmd.sh`)
-* **動態分組面板**：支援自動掃描目錄，高亮顯示各大面具陣營、工具與檢測軟體。
-* **一鍵/單獨安裝**：整合高效安裝邏輯，可一鍵批量靜默部署全套檢測環境，或指定編號單獨升級。
-* **分區生命線**：內置高通（Snapdragon）與聯發科（MTK）雙平台基帶、字庫、Persist 分區一鍵備份與還原指令。
+`Advanced-Root-Toolkit` 是一個集成了歷史、主流與最前沿 Android 玩機工具鏈的開源資產庫。本專案核心由長達數千行的核心指令腳本 `cmd.sh` 動態驅動，提供全自動目錄嗅探、全平台基帶字庫生命線備份、深層安全環境審查以及一鍵式無痕防檢測部署。
 
-### 📦 2. 搞機軍火庫資產清單
+---
 
-| 分類 | 數量/包含內容 | 亮點資產 |
+## 🔥 Core Features / 核心功能
+
+### 🖥️ 1. Interactive Terminal Control Panel (`cmd.sh`) / 互動式終端控制箱
+* **Dynamic Group Sniffing (動態分組面板):** Automatically scans the target directory structure and high-lights root factions (Magisk Alpha/KSU/APatch), utility suites, and detection indicators.
+  自動掃描目錄架構，高亮顯示各大面具陣營、搞機工具與檢測軟體。
+* **One-Click Silent Deployment (一鍵/單獨安裝):** Implements hyper-efficient static transfer installation loops to upgrade specific apps or instantly deploy a clean verification environment.
+  整合高效中轉靜默部署邏輯，可單獨編號升級或一鍵批量初始化完整測試環境。
+* **Partition Lifeline Safeguard (分區生命線):** Built-in high-risk partition flashing logic (`dd` short-cuts) for Snapdragon (Qualcomm) & Dimensity (MTK) basebands, NVRAM, and persist partitions.
+  內置高通與聯發科雙平台基帶、字庫、Persist 分區的一鍵備份與還原指令小抄。
+
+### 🛡️ 2. Micro-Kernel & Security Audit (`run_security_scans`) / 內核級綜合安全檢測
+* **Oppo/OnePlus Inte.ko Detection (歐加反作弊檢測):** Live-audits active anti-cheat kernel drivers (`/proc/inte_ko`) to evaluate environment exposure risks.
+  實時動態檢測歐加系內置驅動級內核反作弊模組的加載狀態與通訊邊界。
+* **DeviceHub RAT IOC Scanner (遠控木馬深檢):** Multi-dimensional checks involving process regex matching (`pgrep`), executable SHA-256 validation, environment array auditing, and `127.0.0.1:8080` back-door intercept.
+  針對高危遠控木馬進行跨 PID 進程特徵匹配、二進制 SHA-256 比對及回環後門精準防禦。
+
+### 🌀 3. Advanced Hook & Sandbox Telemetry / 高階大師環境嗅探
+* **Zygisk Next Tracker:** Telemeters active states of `zn-daemon` vs. legacy zygote hook components.
+  實時追蹤 Zygisk Next 注入守護進程，精準判定環境隱蔽級別。
+* **Seccomp Sandbox Telemetry:** Parses `/proc/$$/status` filter parameters to isolate running scripts from Android process sandbox vectors.
+  解析進程過濾指標，動態判定當前 Shell 執行權限是否受到 Seccomp 沙盒沙盒化干預。
+
+---
+
+## 📦 Asset Arsenal Ledger / 軍火庫清單
+
+| Category / 分類 | Volume / 數量 | Highlighted Assets / 亮點資產 |
 | :--- | :--- | :--- |
-| **ROOT 面具** | 20+ 個核心分支及衍生版 | Magisk Alpha 旗下三大分支、KernelSU、**SukiSU Ultra 及其 19 個衍生分支**、APatch（含 FolkPatch 兩大分支）、SKroot / SKroot Pro。 |
-| **搞機工具** | **48 種** 進階 ROOT 工具 | GG修改器、Hyperlsland、Shizuku 調教版、FolkPure、月虹提權助手、GhostLock、搞機工具箱等。 |
-| **核心模塊** | **28 個** 實用 Magisk/Ksu 模塊 | Zygisk Next 1.5.0、LSPosed v2.2.1、HMA-OSS (Zygisk-oss-173) 等。 |
-| **環境檢測** | **18 個** 嚴苛檢測軟體與指南 | Momo、Ruru、Hunter、Duck Detector 等，**內置《春秋檢測報錯解決方法.txt》實戰指南**。 |
-| **安全與社群** | 必備連結與密鑰 | 持續更新的 **可信任 Google 密鑰**、各大主流 ROOT 面具官方電報（紙飛機）社群群組導航。 |
+| **ROOT Managers** | 20+ Factions | Magisk Alpha, KernelSU, SukiSU Ultra (19 Derivatives), APatch (FolkPatch), SKroot / SKroot Pro. |
+| **Power Utilities** | 48 Advanced Tools | GG Modifier, HyperIsland, Shizuku Mod, FolkPure, Moonbow Helper, GhostLock, Arsenal-Box. |
+| **Core Modules** | 28 Essential Items | Zygisk Next, LSPosed, HMA-OSS, Tricky Store, Target Hide-Root Adjusters. |
+| **Integrity Checks** | 18 Verification Apps | Momo, Ruru, Hunter, Duck Detector, Play Integrity API Checker, MemoryDetector, Holmes. |
 
 ---
 
-## 🛠️ 自動化一鍵部署部署 (`service.sh`)
-內置 `service.sh` 靜默安裝腳本：
-1. **風控繞過**：開機自動動態關閉 Play Protect 風控掃描，防止測試版 APK 被系統攔截。
-2. **無痕防檢測**：自動部署完畢後，即時粉碎暫存安裝包目錄並恢復系統安全設定，完美對抗極端敏感檢測軟體的深層掃描。
+## ⚡ Quick Start / 快速啟動
+
+### Prerequisites / 執行環境
+* An Android device with active `UID=0` (Full Root Access) via **KernelSU / SukiSU / APatch / Magisk**.
+  已獲取全域超級用戶權限（UID=0）的 Android 設備。
+* A modern terminal environment (e.g., **Termux** or **ADB Shell**).
+  配置完成的本機 Termux 終端或電腦端 ADB Shell 控制台。
+
+### Execution / 腳本運行
+```bash
+# Enter superuser environment / 進入超級用戶權限
+su
+
+# Navigate to your download folder & launch / 進入下載路徑並執行
+cd /storage/emulated/0/Download/Root_Collection_All
+sh cmd.sh
+```
 
 ---
 
-## ⚠️ 免責聲明 (Disclaimer)
-* 本倉庫所收集之工具及腳本皆涉及 Android 系統底層核心修改、分區讀寫（dd 指令）等高風險操作。
-* 使用本倉庫工具導致的任何硬體損壞、無限重啟（Bootloop）、數據丟失或基帶未知，本倉庫及作者概不負責。
-* 刷機千萬條，備份第一條。操作前請務必確保已備份重要數據。
+## ⚠️ Disclaimer / 免責聲明
+
+1. **High-Risk Operations (高風險操作):** The scripts and assets contained herein involve Android system-level kernel modifications, partition overrides (`dd` commands), and security bypasses.
+   本倉庫內置工具及腳本皆涉及 Android 系統底層核心修改、分區讀寫等高風險操作。
+2. **No Liability (概不負責):** The maintainer holds **NO responsibility** for any hardware damage, infinity bootloops, data loss, or missing IMEI/baseband states. Use with extreme caution.
+   因使用本倉庫工具導致的任何硬體損壞、無限重啟（Bootloop）、數據丟失或基帶未知，作者概不負責。
+3. **Backup First (備份第一):** Remember the golden rule of Android modding: **Backup your data before any flash attempt.**
+   刷機千萬條，備份第一條。操作前請務必確保已備份重要數據。
 
 ---
-**開發者**：抖音user哥  
-*持續收集、整理與更新，打造最純粹的 Android 底層玩機避難所。*
+
+## 👥 Developers & Community / 開發與社群
+* **Core Contributor (核心開發者):** 抖音 user哥 (TikTok user_Bro)
+* **GitHub Repository:** [hx358273-a11y/Advanced-Root-Toolkit](https://github.com)
+* Give a ⭐️ if this toolkit helped your Android development pipeline! 
+  如果這個控制台幫到了你的搞機之路，歡迎點擊右上角 **Star** 支持！
