@@ -17,6 +17,16 @@ fi
 # 基礎絕對路徑定案
 BASE_DIR="${INTERNAL_STORAGE}/Download/Root_Collection_All"
 
+# 暫存目錄：優先使用 Android shell 暫存區；非 Root/Termux 環境則回退到 TMPDIR。
+TEMP_DIR="/data/local/tmp"
+if [ ! -d "$TEMP_DIR" ] || [ ! -w "$TEMP_DIR" ]; then
+    if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then
+        TEMP_DIR="$TMPDIR"
+    else
+        TEMP_DIR="${INTERNAL_STORAGE}/Download"
+    fi
+fi
+
 # 顏色定義
 RED='\e[1;31m'
 GREEN='\e[1;32m'
@@ -26,16 +36,85 @@ PURPLE='\e[1;35m'
 CYAN='\e[1;36m'
 NC='\e[0m'
 
+# 檢測 Android 現代核心架構與分區指標
+check_android_architecture_status() {
+    # 1. Project Treble & VNDK 檢測
+    local TREBLE_EN=$(getprop ro.treble.enabled 2>/dev/null)
+    local VNDK_VER=$(getprop ro.vndk.version 2>/dev/null)
+    local TREBLE_STR="${RED}未支援Project Treble${NC}"
+    if [ "$TREBLE_EN" = "true" ]; then
+        if [ -n "$VNDK_VER" ]; then
+            TREBLE_STR="${GREEN}支援Project Treble (VNDK ${VNDK_VER})${NC}"
+        else
+            TREBLE_STR="${GREEN}支援Project Treble${NC}"
+        fi
+    fi
+
+    # 2. A/B 無縫更新與當前 Slot 檢測
+    local SLOT_SUFFIX=$(getprop ro.boot.slot_suffix 2>/dev/null)
+    local AB_STR="${RED}未支援 (傳統單分區)${NC}"
+    if [ -n "$SLOT_SUFFIX" ]; then
+        # 去除底線，讓顯示更美觀 (例如 _a 變成 A)
+        local CLEAN_SLOT=$(echo "$SLOT_SUFFIX" | tr -d '_' | tr '[:lower:]' '[:upper:]')
+        AB_STR="${GREEN}支援 (當前正運行於 Slot_${CLEAN_SLOT} 分區)${NC}"
+    fi
+
+    # 3. CPU 架構與類型檢測
+    local CPU_ABI=$(getprop ro.product.cpu.abi 2>/dev/null)
+    local CPU_STR="${YELLOW}${CPU_ABI}${NC}"
+    if [ "$CPU_ABI" = "arm64-v8a" ]; then
+        CPU_STR="${GREEN}64-bit ARM (arm64-v8a)${NC}"
+    elif [ "$CPU_ABI" = "armeabi-v7a" ]; then
+        CPU_STR="${YELLOW}32-bit ARM (armeabi-v7a)${NC}"
+    fi
+
+    # 4. System-as-root (SAR) 檢測
+    local SAR_EN=$(getprop ro.build.system_root_image 2>/dev/null)
+    local SAR_STR="${RED}未支援${NC}"
+    # 僅用明確屬性或 A/B slot 作為線索；不能只憑 SDK 版本斷言 SAR。
+    if [ "$SAR_EN" = "true" ]; then
+        SAR_STR="${GREEN}屬性回報支援${NC}"
+    elif [ -n "$SLOT_SUFFIX" ]; then
+        SAR_STR="${YELLOW}疑似支援 (A/B slot 線索，未直接驗證)${NC}"
+    else
+        SAR_STR="${YELLOW}無法確認 (屬性未提供)${NC}"
+    fi
+
+    # ==================== 科技感高亮輸出 ====================
+    echo -e "${CYAN}[系統資訊] Project Treble: ${TREBLE_STR}"
+    echo -e "${CYAN}[系統資訊] 無縫系統更新: ${AB_STR}"
+    echo -e "${CYAN}[系統資訊] CPU 核心架構: ${CPU_STR}"
+    echo -e "${CYAN}[系統資訊] System-as-root: ${SAR_STR}"
+}
+
 # SELinux 狀態檢測與自動修復
 check_selinux() {
+    local STATUS
     # 檢查是否擁有 Root 權限
     if [ "$(id -u 2>/dev/null)" != 0 ]; then
-        echo -e "${YELLOW}[提示] 非 Root 執行；部分狀態可能無法讀取。${NC}"
+        echo -e "${YELLOW}[提示] 非 Root 執行；部分狀態可能無法讀取與修改。${NC}"
     fi
+
     STATUS=$(getenforce 2>/dev/null)
     [ -n "$STATUS" ] || STATUS="未知"
-    echo -e "${CYAN}[系統狀態] 目前 SELinux 狀態為: ${YELLOW}$STATUS${NC}"
-    echo -e "${GREEN}[唯讀檢查] 不會自動修改 SELinux 設定。${NC}"
+    
+    echo -e "${CYAN}[系統狀態] 目前 SELinux 狀態為：${YELLOW}$STATUS${NC}"
+
+    # 如果狀態是 Permissive（寬容），則自動修正為 Enforcing（強制）
+    if [ "$STATUS" = "Permissive" ]; then
+        echo -e "${YELLOW}[自動修復] 檢測到寬容模式，正在嘗試修正為強制模式...${NC}"
+        if setenforce 1 2>/dev/null; then
+            # 重新確認修改後的狀態
+            NEW_STATUS=$(getenforce 2>/dev/null)
+            echo -e "${GREEN}[修復成功] SELinux 已成功切換為：${YELLOW}$NEW_STATUS${NC}"
+        else
+            echo -e "${RED}[修復失敗] 無法寫入設定，請檢查是否擁有足夠的 Root 權限。${NC}"
+        fi
+    elif [ "$STATUS" = "Enforcing" ]; then
+        echo -e "${GREEN}[核心狀態] SELinux 已處於強制模式，無需修改。${NC}"
+    else
+        echo -e "${RED}[核心狀態] SELinux 處於未知或已停用 (Disabled) 狀態，無法直接切換。${NC}"
+    fi
 }
 
 # Zygisk Next (zn-daemon) 進程狀態即時監測
@@ -55,7 +134,7 @@ check_device_model() {
     local MODEL=$(getprop ro.product.marketname 2>/dev/null)
     [ -z "$MODEL" ] && MODEL=$(getprop ro.product.model 2>/dev/null)
     [ -z "$MODEL" ] && MODEL="未知設備"
-    
+
     echo -e "${CYAN}[設備資訊] 設備型號為: ${YELLOW}$MODEL${NC}"
 }
 
@@ -63,85 +142,203 @@ check_device_model() {
 check_kernel_version() {
     # 獲取簡短的核心版本號（例如 6.6.118）
     local KERNEL_SHORT=$(uname -r 2>/dev/null)
-    # 獲取完整核心編譯資訊
-    local KERNEL_FULL=$(uname -v 2>/dev/null)
-    
     if [ -n "$KERNEL_SHORT" ]; then
         echo -e "${CYAN}[系統資訊] 內核版本為: ${YELLOW}$KERNEL_SHORT${NC}"
-       
+
     else
         echo -e "${RED}[系統資訊] 無法獲取內核版本${NC}"
     fi
 }
 
-# 3. 檢測鉤子類型
-check_hook_type() {
-    
-    if lsmod 2>/dev/null | grep -q "suki" || [ -d "/sys/module/suki" ]; then
-        echo -e "${GREEN}[核心狀態] 鉤子類型為: Tracepoint Syscall Redirect${NC}"
+# 交叉檢測 Bootloader 軟硬體真實狀態
+# 檢測 Bootloader 鎖狀態（聚焦軟體與模組對抗）
+check_bl_integrity_status() {
+    local PROP_LOCK=$(getprop ro.boot.flash.locked 2>/dev/null)
+
+    if [ "$PROP_LOCK" = "1" ]; then
+        # ro.boot.flash.locked 只代表系統回報值，不能單靠 Root 狀態推斷 Tricky Store。
+        if [ "$(id -u 2>/dev/null)" = "0" ] || { command -v su >/dev/null 2>&1 && su -c "id" >/dev/null 2>&1; }; then
+            echo -e "${PURPLE}[核心狀態] BL 回報狀態: 鎖定 (目前可取得 Root；此結果不能證明 BL 真實狀態)${NC}"
+        else
+            echo -e "${GREEN}[核心狀態] BL 回報狀態: 鎖定 (僅代表系統屬性回報值)${NC}"
+        fi
+    elif [ "$PROP_LOCK" = "0" ]; then
+        echo -e "${YELLOW}[核心狀態] BL 認證狀態: 軟體[解鎖] (常規解鎖環境)${NC}"
     else
-        # 現代 6.1+ 核心與高版本 KSU/SukiSU 環境預設皆採用此領先技術
-        echo -e "${GREEN}[核心狀態] 鉤子類型為: Tracepoint Syscall Redirect (自動識別)${NC}"
+        echo -e "${RED}[核心狀態] BL 認證狀態: 軟體[未知狀態]${NC}"
+    fi
+}
+
+# 檢測 Xposed 框架環境 (LSPosed / Vector)
+check_xposed_framework() {
+    # 1. 狀況一：沒有 Root 權限，無法讀取 /data/adb
+    if ! command -v su >/dev/null 2>&1; then
+        echo -e "${RED}[核心狀態] 未檢測到 Xposed 框架 (無 ROOT 權限，無法掃描環境)${NC}"
+        return
+    fi
+
+    # 2. 狀況二：有 Root 權限，精準掃描是否有 lspd 守護進程資料夾
+    if su -c "[ -d /data/adb/lspd ]" >/dev/null 2>&1; then
+        echo -e "${GREEN}[核心狀態] 檢測到 Xposed 框架 (LSPosed / Vector)${NC}"
+    
+    # 3. 狀況三：有 Root 權限，但未發現特徵資料夾
+    else
+        echo -e "${YELLOW}[核心狀態] 未檢測到 Xposed 框架環境${NC}"
+    fi
+}
+
+# 檢測超級用戶權限狀態
+check_su_permission() {
+    local CURRENT_UID
+    CURRENT_UID=$(id -u 2>/dev/null)
+
+    # 1. 狀況一：UID=0，代表已經完全進入 Root 環境
+    if [ "$CURRENT_UID" = "0" ]; then
+        echo -e "${GREEN}[核心狀態] 超級用戶權限: 已完全接管 (全域 Root, UID=0)${NC}"
+        return
+    fi
+
+    # 2. 狀況二：UID 不為 0，但系統有 su 指令，嘗試進行動態提權檢測
+    if command -v su >/dev/null 2>&1; then
+        if su -c "id" >/dev/null 2>&1; then
+            echo -e "${GREEN}[核心狀態] 超級用戶權限: 已成功授予 (Shell 動態提權)${NC}"
+            return
+        fi
+    fi
+
+    # 觸發非 Root 方案：開始精準判定 UID 並進行警告 
+    
+    # 狀況三：UID=2000，代表目前僅持有 ADB / Shizuku 的 Shell 權限
+    if [ "$CURRENT_UID" = "2000" ]; then
+        echo -e "${YELLOW}[核心狀態] 超級用戶權限: 僅獲取到 Shell 權限 (UID=2000)${NC}"
+        echo -e "${RED}[警告] ⚠️ 未獲取完整 ROOT 權限，安裝等核心功能將無法使用！${NC}"
+    
+    # 狀況四：UID>=10000，代表只是普通 App 權限，或者完全沒有 Root 方案
+    elif [ -n "$CURRENT_UID" ] && [ "$CURRENT_UID" -ge 10000 ] 2>/dev/null; then
+        echo -e "${RED}[核心狀態] 超級用戶權限: 普通應用權限 (UID=$CURRENT_UID, 非 ROOT 方案)${NC}"
+        echo -e "${RED}[警告] ⚠️ 未獲取完整 ROOT 權限，有些功能可能沒法使用！${NC}"
+    
+    # 保底狀況：防禦性未知權限
+    else
+        echo -e "${RED}[核心狀態] 超級用戶權限: 未授權或未知權限環境${NC}"
+        echo -e "${RED}[警告] ⚠️ 未獲取完整 ROOT 權限，有些功能可能沒法使用！${NC}"
+    fi
+}
+
+#檢測 ROOT 方案 
+check_root_solution() {
+    # 如果完全沒有 root 權限，直接判定為無 root
+    if ! command -v su >/dev/null 2>&1; then
+        echo -e "${RED}[核心狀態] ROOT 方案為: 無 ROOT 環境${NC}"
+        return
+    fi
+
+    # 透過 su -c 權限去偵測 /data/adb 內部的關鍵特徵與古董特徵
+    if su -c "[ -f /data/adb/ksud ]" >/dev/null 2>&1; then
+        echo -e "${GREEN}[核心狀態] ROOT 方案為: KernelSU / SukiSU 分支${NC}"
+        
+    elif su -c "[ -f /data/adb/apd ]" >/dev/null 2>&1; then
+        echo -e "${YELLOW}[核心狀態] ROOT 方案為: APatch 方案${NC}"
+        
+    elif su -c "[ -f /data/adb/magisk.db ]" >/dev/null 2>&1; then
+        echo -e "${YELLOW}[核心狀態] ROOT 方案為: 傳統阿爾法面具 (Magisk Alpha)${NC}"
+        
+    # 古董級 KingRoot 特徵檢測：通常會在 /data/data/ 或系統內留下 kinguser 或 k_daemon
+    elif su -c "[ -d /data/data/com.kingroot.kinguser ] || [ -f /system/bin/rt-root ] || [ -f /system/xbin/ku.sud ]" >/dev/null 2>&1; then
+        echo -e "${RED}[核心狀態] ROOT 方案為: 古董級 KingRoot 方案${NC}"
+        
+    else
+        # 四大特徵皆無的未知 Root
+        echo -e "${RED}[核心狀態] ROOT 方案為: 未知自訂超級用戶環境${NC}"
+    fi
+}
+
+#檢測鉤子類型
+check_hook_type() {
+    # 如果完全沒有 root 權限
+    if ! command -v su >/dev/null 2>&1; then
+        echo -e "${RED}[核心狀態] 未檢測到hook類型（可能為內聯鉤子或是無root）${NC}"
+        return
+    fi
+
+    local IS_KSU=""
+    local IS_SUSFS=""
+    local IS_APATCH=""
+    local IS_MAGISK=""
+
+    # 收集核心檔案特徵
+    if su -c "[ -f /data/adb/ksud ]" >/dev/null 2>&1; then
+        IS_KSU="true"
+    fi
+    if su -c "[ -d /data/adb/modules/susfs4ksu ] || [ -d /data/adb/susfs ]" >/dev/null 2>&1; then
+        IS_SUSFS="true"
+    fi
+    if su -c "[ -f /data/adb/apd ]" >/dev/null 2>&1; then
+        IS_APATCH="true"
+    fi
+    if su -c "[ -f /data/adb/magisk.db ]" >/dev/null 2>&1; then
+        IS_MAGISK="true"
+    fi
+
+    # Root 管理器檔案只能辨識方案家族，不能據此判定核心 Hook 技術。
+    # 結合嚴謹性與玩機爽感的完全體輸出
+    if [ "$IS_KSU" = "true" ] && [ "$IS_SUSFS" = "true" ]; then
+        echo -e "${GREEN}[核心狀態] 鉤子類型/特徵: SuSFS 2.3.0鉤子技術(偵測到 kernelSU+SUSFS)${NC}"
+    elif [ "$IS_KSU" = "true" ]; then
+        echo -e "${GREEN}[核心狀態] 鉤子類型/特徵:Tracepoint Syscall Redirect 重定向鉤子技術(基於系統特徵推測)${NC}"
+    elif [ "$IS_APATCH" = "true" ]; then
+        echo -e "${YELLOW}[核心狀態] 鉤子類型/特徵: 核心級 KP (KernelPatch) 內聯 Hook (基於系統特徵推測)${NC}"
+    elif [ "$IS_MAGISK" = "true" ]; then
+        echo -e "${YELLOW}[核心狀態] 鉤子類型/特徵: 傳統 Magisk 內置 ptrace/Zygote Hook (基於系統特徵推測)${NC}"
+    else
+        echo -e "${YELLOW}[核心狀態] 鉤子類型/特徵: 未匹配已知管理器標記 (暫定為未知 Hook 類型)${NC}"
     fi
 }
 
 #Seccomp状态检测
 check_seccomp() {
-    local SECCOMP_STATUS=""
-    local TARGET_PID=""
+    local SECCOMP_STATUS
+    SECCOMP_STATUS=$(awk '/^Seccomp:/ {print $2; exit}' "/proc/$$/status" 2>/dev/null)
 
-    # 1. 嘗試用 Root 權限抓取 com.android.systemui 的 PID
-    if command -v su >/dev/null 2>&1; then
-        TARGET_PID=$(su -c "pidof com.android.systemui 2>/dev/null" | awk '{print $1}')
-        if [ -n "$TARGET_PID" ]; then
-            SECCOMP_STATUS=$(su -c "cat /proc/$TARGET_PID/status 2>/dev/null" | grep -i "Seccomp:" | awk '{print $2}')
-        fi
-    fi
-
-    # 2. 備用方案：如果上面沒抓到，嘗試用 Root 看全域核心參數
-    if [ -z "$SECCOMP_STATUS" ] && command -v su >/dev/null 2>&1; then
-        if su -c "[ -d /proc/sys/kernel/seccomp ]"; then
-            SECCOMP_STATUS="2"
-        fi
-    fi
-
-    # 3. 終極保底：若完全沒有 Root 或都抓不到，才退回讀取當前 Shell（這時如果是 0 就隨它，至少不報錯）
-    if [ -z "$SECCOMP_STATUS" ]; then
-        SECCOMP_STATUS=$(cat /proc/$$/status 2>/dev/null | grep -i "Seccomp:" | awk '{print $2}')
-    fi
-
-    # 4. 如果連保底都是空的，強制歸零
-    [ -z "$SECCOMP_STATUS" ] && SECCOMP_STATUS="0"
-
-    # 5. 狀態判斷與輸出
     if [ "$SECCOMP_STATUS" = "2" ]; then
-        echo -e "${GREEN}[核心狀態] Seccomp 處於 過濾模式 (Filter)${NC}"
+        echo -e "${GREEN}[核心狀態] 目前腳本進程 Seccomp: Filter (2)過濾器模式（此腳本將受到Seccomp影響，但大部分功能展示可用）${NC}"
     elif [ "$SECCOMP_STATUS" = "1" ]; then
-        echo -e "${YELLOW}[核心狀態] Seccomp 處於 嚴格模式 (Strict)${NC}"
+        echo -e "${YELLOW}[核心狀態] 目前腳本進程 Seccomp: Strict (1)嚴格模式（此進程將受到Seccomp過濾影響，只能呼叫 read、write、_exit 和 sigreturn 這些函數）${NC}"
+    elif [ "$SECCOMP_STATUS" = "0" ]; then
+        echo -e "${YELLOW}[核心狀態] 目前腳本進程 Seccomp: Disabled (0)完全未啟用過濾(此腳本進程不會找受Seccomp的沙盒影響）${NC}"
     else
-        echo -e "${RED}[核心狀態] Seccomp 已停用或無法偵測 (Disabled)${NC}"
+        echo -e "${RED}[核心狀態] 無法讀取目前腳本進程的 Seccomp 狀態${NC}"
     fi
 }
 
 show_header() {
+    # 僅顯示標題；子選單呼叫時不重複執行裝置檢測。
     clear
     echo -e "${CYAN}==================================================${NC}"
     echo -e "${GREEN}                頂級搞機軍火庫 (互動面板)        ${NC}"
     echo -e "${CYAN}==================================================${NC}"
     echo -e "開發者：抖音user哥"
-    
-    # 執行各項狀態檢查
-    check_zygisk_status
+    echo ""
+}
+
+show_system_status() {
+    # 僅由 1-12 主選單呼叫，其他子頁面不執行這些檢測。
+    check_kernel_version
+    check_device_model
+    check_bl_integrity_status
+    check_android_architecture_status
     check_selinux
     check_seccomp
-    check_device_model
-    check_kernel_version
+    check_su_permission
+    check_root_solution
+    check_zygisk_status
+    check_xposed_framework
     check_hook_type
     echo ""
 }
 
 # 掃描與安裝核心函數
-scan_and_install() {
+scan_and_install() (
     local sub_folder="$1"
     local target_path=""
 
@@ -150,7 +347,7 @@ scan_and_install() {
     else
         target_path="$BASE_DIR/$sub_folder"
     fi
-    
+
     show_header
     echo -e "${PURPLE}=== 當前分組：$(basename "$target_path") ===${NC}"
     echo -e "正在掃描目錄: $target_path"
@@ -166,7 +363,7 @@ scan_and_install() {
     fi
 
     cd "$target_path" || return
-    
+
     local has_apk=0
     for file in *.apk; do
         if [ -f "$file" ]; then has_apk=1; break; fi
@@ -187,7 +384,7 @@ scan_and_install() {
         echo -e "  [ ${YELLOW}$count${NC} ] $file"
         count=$((count + 1))
     done
-    
+
     echo "-------------------------------------------------"
     echo -e "輸入 [ ${YELLOW}數字${NC} ] 單獨安裝該編號的 APK"
     echo -e "輸入 [ ${YELLOW}all${NC}  ] 一鍵批量安裝此分組下的所有 APK"
@@ -206,15 +403,19 @@ scan_and_install() {
             for apk in *.apk; do
                 [ -e "$apk" ] || continue
                 echo -ne "正在傳輸並部署: $apk ... "
-                cp "$apk" /data/local/tmp/runtime_temp_mask.apk
-                chmod 777 /data/local/tmp/runtime_temp_mask.apk
-                
-                if pm install -r /data/local/tmp/runtime_temp_mask.apk >/dev/null 2>&1; then
+                install_tmp="/data/local/tmp/root_collection_install_$$_${count}.apk"
+                if ! cp "$apk" "$install_tmp"; then
+                    echo -e "[ ${RED}失敗：無法複製 APK${NC} ]"
+                    continue
+                fi
+                chmod 600 "$install_tmp" 2>/dev/null
+                if pm install -r "$install_tmp"; then
                     echo -e "[ ${GREEN}成功${NC} ]"
                 else
-                    echo -e "[ ${RED}失敗：請檢查簽名或版本${NC} ]"
+                    echo -e "[ ${RED}失敗：請檢查簽名、版本或安裝權限${NC} ]"
                 fi
-                rm -f /data/local/tmp/runtime_temp_mask.apk
+                rm -f "$install_tmp"
+                count=$((count + 1))
             done
             echo -e "${GREEN}\n 該分組流程執行完畢！${NC}"
             echo -n "按任意鍵返回..."
@@ -231,15 +432,18 @@ scan_and_install() {
 
             if [ -n "$target_apk" ]; then
                 echo -e "${YELLOW}\n 正在中轉單獨安裝: $target_apk ...${NC}"
-                cp "$target_apk" /data/local/tmp/runtime_temp_mask.apk
-                chmod 777 /data/local/tmp/runtime_temp_mask.apk
-                
-                if pm install -r /data/local/tmp/runtime_temp_mask.apk; then
-                    echo -e "${GREEN} [成功] 安裝流程執行完畢！${NC}"
+                install_tmp="/data/local/tmp/root_collection_install_$$_single.apk"
+                if ! cp "$target_apk" "$install_tmp"; then
+                    echo -e "${RED} [失敗] 無法複製 APK 到暫存目錄。${NC}"
                 else
-                    echo -e "${RED} [失敗] 安裝終止，可能是裝置已存在衝突簽名或不允許版本降級。${NC}"
+                    chmod 600 "$install_tmp" 2>/dev/null
+                    if pm install -r "$install_tmp"; then
+                        echo -e "${GREEN} [成功] 安裝流程執行完畢！${NC}"
+                    else
+                        echo -e "${RED} [失敗] 安裝終止，請檢查簽名、版本或安裝權限。${NC}"
+                    fi
+                    rm -f "$install_tmp"
                 fi
-                rm -f /data/local/tmp/runtime_temp_mask.apk
             else
                 echo -e "${RED}錯誤: 找不到該編號對應的 APK！${NC}"
                 sleep 1.5
@@ -253,7 +457,7 @@ scan_and_install() {
             sleep 1
             ;;
     esac
-}
+)
 
 # 隱藏模組與 TEE 專用分流選單
 hide_modules_menu() {
@@ -267,7 +471,7 @@ hide_modules_menu() {
         echo -n "請輸入編號 (0-2): "
         read hide_choice
         hide_choice=$(echo "$hide_choice" | tr -d '\r\n\t ')
-        
+
         case "$hide_choice" in
             0|"") break ;;
             1) scan_and_install "Magisk_Ksu_Modules/Hide Root Modules/" ;;
@@ -296,7 +500,7 @@ advanced_modules_menu() {
         echo -n "請輸入編號 (0-9): "
         read mod_choice
         mod_choice=$(echo "$mod_choice" | tr -d '\r\n\t ')
-        
+
         case "$mod_choice" in
             0|"") break ;;
             1) scan_and_install "Magisk_Ksu_Modules/Ad-Blocker Module (via Xposed,Hook)/" ;;
@@ -328,7 +532,7 @@ root_tools_pack_menu() {
         echo -n "請輸入編號 (0-5): "
         read tool_pack_choice
         tool_pack_choice=$(echo "$tool_pack_choice" | tr -d '\r\n\t ')
-        
+
         case "$tool_pack_choice" in
             0|"") break ;;
             1) scan_and_install "Root_Tools_Pack/HyperOS Zone/" ;;
@@ -367,7 +571,7 @@ kernelsu_family_menu() {
         echo -n "請輸入編號 (0-13): "
         read ksu_choice
         ksu_choice=$(echo "$ksu_choice" | tr -d '\r\n\t ')
-        
+
         case "$ksu_choice" in
             0|"") break ;;
             1) scan_and_install "$R/Anti-Detection Manager/" ;;
@@ -381,11 +585,11 @@ kernelsu_family_menu() {
             echo -e "  2) 進入偽裝版"
             echo -e "  0) 返回 KSU 選單"
             echo "-------------------------------------"
-            
+
             echo -ne "請選擇："
             read next_choice
             next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
-            
+
             case "$next_choice" in
                 0|"") break ;;
                 1) scan_and_install "Root_Managers_All/KernelSU_Series/kernelSU-Next/" ;;
@@ -405,11 +609,11 @@ kernelsu_family_menu() {
             echo -e "  2) 進入測試版"
             echo -e "  0) 返回 KSU 選單"
             echo "-------------------------------------"
-            
+
             echo -ne "請選擇："
             read next_choice
             next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
-            
+
             case "$next_choice" in
                 0|"") break ;;
                 1) scan_and_install "Root_Managers_All/KernelSU_Series/BakaSU (ReSukiSU)/" ;;
@@ -429,11 +633,11 @@ kernelsu_family_menu() {
             echo -e "  4) 進入beta+spoofed"
             echo -e "  0) 返回 KSU 選單"
             echo "-------------------------------------"
-            
+
             echo -ne "請選擇："
             read next_choice
             next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
-            
+
             case "$next_choice" in
                 0|"") break ;;
                 1) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/" ;;
@@ -452,11 +656,11 @@ kernelsu_family_menu() {
             echo -e "  2) 進入偽裝版"
             echo -e "  0) 返回 KSU 選單"
             echo "-------------------------------------"
-            
+
             echo -ne "請選擇："
             read next_choice
             next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
-            
+
             case "$next_choice" in
                 0|"") break ;;
                 1) scan_and_install "Root_Managers_All/KernelSU_Series/Wild_KSU/" ;;
@@ -491,7 +695,7 @@ root_mask_menu() {
         echo -n "請輸入編號 (0-4): "
         read mask_choice
         mask_choice=$(echo "$mask_choice" | tr -d '\r\n\t ')
-        
+
         case "$mask_choice" in
             0|"") break ;;
             1) 
@@ -553,9 +757,9 @@ tg_channels() {
     echo -n "請輸入編號跳轉 (輸入 0 返回): "
     read tg_choice
     tg_choice=$(echo "$tg_choice" | tr -d '\r\n\t ')
-    
+
     [ "$tg_choice" = "0" ] || [ -z "$tg_choice" ] && return
-    
+
     local url=""
     case "$tg_choice" in
         1) url="https://t.me/magiskalpha" ;;
@@ -570,10 +774,25 @@ tg_channels() {
         10) url="https://t.me/qdyKernel" ;;
         11) url="https://t.me/LSPosed" ;;
     esac
-    
+
     if [ -n "$url" ]; then
         am start -a android.intent.action.VIEW -d "$url" >/dev/null 2>&1
     fi
+}
+
+prepare_obfuscation_output() {
+    SRC_ORIGINAL="$SRC_PATH"
+    SRC_OUTPUT="${SRC_ORIGINAL}.obfuscated.sh"
+    if [ -e "$SRC_OUTPUT" ]; then
+        echo -n "輸出檔已存在：$SRC_OUTPUT；是否覆寫？(y/N): "
+        IFS= read -r overwrite_choice
+        case "$overwrite_choice" in y|Y|yes|YES) ;; *) echo "已取消，原始檔未變更。"; return 1 ;; esac
+    fi
+    if ! cp -p "$SRC_ORIGINAL" "$SRC_OUTPUT"; then
+        echo "無法建立輸出副本，已取消。"
+        return 1
+    fi
+    SRC_PATH="$SRC_OUTPUT"
 }
 
 shell_obfuscation() {
@@ -606,8 +825,8 @@ echo -e "${cyan}══════════════════  卡密�
 echo -ne "${green}▶ 请输入卡密：${reset}"
 read -r CARD_KEY
 
-if [ -z "$CARD_KEY" ];then
-    echo -e "${red}卡密不能为空，返回主菜单${reset}"
+if [ "$CARD_KEY" != "12345678" ]; then
+    echo -e "${red}卡密錯誤或為空，返回主菜單${reset}"
     sleep 1.5
     return
 fi
@@ -645,14 +864,15 @@ if [ "$SEL" = "2" ];then
         return
     fi
 
-    TMP_GZ="/data/local/tmp/_gz_$$.tmp"
-    TMP_B64="/data/local/tmp/_b64_$$.tmp"
+    prepare_obfuscation_output || return
+    TMP_GZ="${TEMP_DIR}/_gz_$$.tmp"
+    TMP_B64="${TEMP_DIR}/_b64_$$.tmp"
     gzip -c "$SRC_PATH" > "$TMP_GZ"
     base64 -w 76 "$TMP_GZ" > "$TMP_B64"
 
     cat > "$SRC_PATH" <<'EOF'
 #!/system/bin/sh
-TMPDEC="/data/local/tmp/_dec_$$.sh"
+TMPDEC="${TMPDIR:-/data/local/tmp}/_dec_$$.sh"
 sed '1,/^#__DATA__/d' "$0" | base64 -d | gzip -d > "$TMPDEC"
 chmod 755 "$TMPDEC"
 sh "$TMPDEC"
@@ -684,7 +904,8 @@ if [ "$SEL" = "3" ];then
         return
     fi
 
-    TMPHEX="/data/local/tmp/_hex_$$.tmp"
+    prepare_obfuscation_output || return
+    TMPHEX="${TEMP_DIR}/_hex_$$.tmp"
     xxd -p "$SRC_PATH" | tr -d '\n' > "$TMPHEX"
     HEXDATA=$(cat "$TMPHEX")
 
@@ -718,6 +939,7 @@ if [ "$SEL" = "4" ];then
         return
     fi
 
+    prepare_obfuscation_output || return
     RAW=$(cat "$SRC_PATH")
     b1=$(printf "%s" "$RAW"|base64 -w0)
     b2=$(printf "%s" "$b1"|base64 -w0)
@@ -780,6 +1002,7 @@ if [ "$SEL" = "5" ];then
         return
     fi
 
+    prepare_obfuscation_output || return
     RAW=$(cat "$SRC_PATH")
     e1=$(printf "%s" "$RAW" | base64 -w0)
     e2=$(printf "%s" "$e1" | base64 -w0)
@@ -824,6 +1047,7 @@ if [ "$SEL" = "6" ];then
         sleep 1.5
         return
     fi
+    prepare_obfuscation_output || return
     RAW=$(cat "$SRC_PATH"|base64 -w0)
     cat > "$SRC_PATH" <<'SUBSHELL_LOADER'
 #!/system/bin/sh
@@ -862,6 +1086,7 @@ if [ "$SEL" = "7" ];then
         sleep 1.5
         return
     fi
+    prepare_obfuscation_output || return
     RAW=$(cat "$SRC_PATH"|base64 -w0)
     cat > "$SRC_PATH" <<'FAKELOOP_LOADER'
 #!/system/bin/sh
@@ -907,12 +1132,13 @@ if [ ! -f "$SRC_PATH" ];then
     return
 fi
 
-TMP_GZ="/data/local/tmp/_gz_$$.tmp"
+    prepare_obfuscation_output || return
+TMP_GZ="${TEMP_DIR}/_gz_$$.tmp"
 gzip -c "$SRC_PATH" > "$TMP_GZ"
 
 cat > "$SRC_PATH" <<'EOF'
 #!/system/bin/sh
-TMPDEC="/data/local/tmp/_dec_$$.sh"
+TMPDEC="${TMPDIR:-/data/local/tmp}/_dec_$$.sh"
 sed '1,/^#__DATA__/d' "$0" | gzip -d > "$TMPDEC"
 chmod 755 "$TMPDEC"
 sh "$TMPDEC"
@@ -934,17 +1160,21 @@ read -n 1
 
 # =================================================================
 # 內嵌檢測腳本：先 Inte.ko，再遠控木馬 IOC 掃描
-# =================================================================
+# ================================================================
 run_embedded_scan() {
-    scan_name="$1"
-    scan_body="$2"
-    scan_tmp="/data/local/tmp/.root_collection_${scan_name}_$$.sh"
+    local scan_name="$1"
+    local scan_body="$2"
+    local scan_tmp="${TEMP_DIR}/.root_collection_${scan_name}_$$.sh"
+    local scan_rc
     if ! (umask 077; : > "$scan_tmp") 2>/dev/null; then
         echo -e "${RED}[錯誤] 無法建立暫存檔：$scan_tmp${NC}"
         return 1
     fi
-    printf '%s\n' "$scan_body" > "$scan_tmp"
-    chmod 700 "$scan_tmp" 2>/dev/null
+    if ! printf '%s\n' "$scan_body" > "$scan_tmp" || ! chmod 700 "$scan_tmp" 2>/dev/null; then
+        echo -e "${RED}[錯誤] 無法完整寫入檢測腳本。${NC}"
+        rm -f "$scan_tmp"
+        return 1
+    fi
     sh "$scan_tmp"
     scan_rc=$?
     rm -f "$scan_tmp"
@@ -952,19 +1182,25 @@ run_embedded_scan() {
 }
 
 run_security_scans() {
-    show_header
-    echo -e "${YELLOW}=== 綜合安全檢測 ===${NC}"
-    echo "執行順序：1. 歐加 Inte.ko 檢測  2. DeviceHub 遠控病毒 IOC 檢測"
-    echo "檢測腳本以唯讀方式執行；不會自動清除檔案或終止程序。"
+    # 移除 show_header，直接全面清屏，給後續的檢測留出完整的螢幕空間
+    clear
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "${GREEN}                頂級搞機軍火庫 (綜合安全檢測)    ${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "${YELLOW}執行順序：1. 歐加 Inte.ko 檢測  2. DeviceHub 遠控病毒 IOC 檢測${NC}"
+    echo -e "檢測腳本以唯讀方式執行；不會自動清除檔案或終止程序。"
     echo "-------------------------------------------------"
+    
     echo -e "${CYAN}[1/2] 開始歐加反作弊 Inte.ko 檢測...${NC}"
     run_embedded_scan "inteko" "$INTEKO_SCAN"
     inte_rc=$?
     echo
+    
     echo -e "${CYAN}[2/2] 開始遠控病毒檢測...${NC}"
     run_embedded_scan "devicehub" "$DEVICEHUB_SCAN"
     devicehub_rc=$?
     echo
+    
     echo "-------------------------------------------------"
     echo "檢測流程完成。Inte.ko 狀態碼：$inte_rc；遠控檢測狀態碼：$devicehub_rc"
     echo -n "按任意鍵返回主選單..."
@@ -1167,7 +1403,7 @@ cat <<EOF
 #  DeviceHub / 平安远控  纯检测 v11（只读 · 零修改）
 #  UID: $(id -u 2>/dev/null)    SELinux: $(getenforce 2>/dev/null || echo '?')
 #  检测范围: 仅逆向确认的精确 IOC，不扫描用户目录
-#  行为范围: 不删除 / 不终止 / 不修改系统设置 / 不卸载 / 不落盘
+#  行为范围: 不刪除 / 不終止 / 不修改系統設定 / 不卸載；只建立並清理暫存檢測腳本
 ############################################################
 EOF
 printf '%b' "$R"
@@ -1295,14 +1531,14 @@ if [ -n "$PIDS" ]; then
     case "$exe" in
       *"(deleted)"*)
         sus "PID=$pid exe 已删除（反取证）: $exe" ;;
-      /*)
+    /*)
         if [ -f "$exe" ]; then
-          check_hash "$exe" "$HASH_MAIN"; rc=$?
-          if [ "$rc" = "0" ]; then
-            conf "PID=$pid exe SHA-256 精确匹配主 ELF"
-          elif [ "$rc" = "1" ]; then
-            sus "PID=$pid exe 同路径异 hash（疑似变种）"
-          fi
+            check_hash "$exe" "$HASH_MAIN"; rc=$?
+            if [ "$rc" = "0" ]; then
+                conf "PID=$pid exe SHA-256 精确匹配主 ELF"
+            elif [ "$rc" = "1" ]; then
+                sus "PID=$pid exe 同路径异 hash（疑似变种）"
+            fi
         fi
         ;;
     esac
@@ -1452,24 +1688,8 @@ else
   ok "无 devicehub 相关连接"
 fi
 
-if have getent && [ -r /proc/net/tcp ]; then
-  C2_IPS=$( (have timeout && timeout 3 getent hosts "$C2_DOMAIN") 2>/dev/null \
-            || getent hosts "$C2_DOMAIN" 2>/dev/null | awk '{print $1}' | head -n 4 )
-  if [ -n "$C2_IPS" ]; then
-    for ip in $C2_IPS; do
-      hex=$(printf '%s\n' "$ip" | awk -F. 'NF==4{sprintf "%02X%02X%02X%02X",$4,$3,$2,$1}')
-      [ -n "$hex" ] || continue
-      if awk -v h="$hex" '$3==h && $4=="01"{f=1} END{exit !f}' /proc/net/tcp 2>/dev/null; then
-        hit "存在到 $C2_DOMAIN($ip) 的已建立 TCP 连接"
-        sus "已连接 $C2_DOMAIN($ip)（辅助证据）"
-      fi
-    done
-  else
-    info "$C2_DOMAIN 无法解析（无 DNS/无网络），跳过 IP 比对"
-  fi
-else
-  info "getent 不可用或 /proc/net/tcp 不可读，跳过 $C2_DOMAIN IP 比对"
-fi
+# 不主動查詢 DNS：C2_DOMAIN 來源尚未充分驗證，避免檢測時產生外部 DNS 請求。
+info "C2 網域僅做本機進程命令列字串比對；不執行 DNS 查詢"
 
 if [ -r /proc/net/tcp ] && awk '$2=="0100007F:1F90" && $4=="0A"{f=1} END{exit !f}' /proc/net/tcp 2>/dev/null; then
   hit "IPv4 回环后门 127.0.0.1:8080 LISTEN"
@@ -1537,7 +1757,7 @@ if [ "$C_CONF" -gt 0 ]; then
      ② SIGSTOP 冻结恶意进程，chmod 000 主 ELF，再 SIGKILL
      ③ pm uninstall com.devicehub.agent
      ④ 恢复无障碍/appops/deviceidle/stay_on 设置
-     ⑤ rm -rf /data/system/devicehub /devicehub_* /devicehub_inject*
+     ⑤ 不要直接執行通配符 rm -rf；先備份並逐項人工核對命中路徑，再決定處置方式
   4. 若段 H 报告系统分区存在 —— rm 无法根治，必须刷官方固件对应分区
   5. 若段 C 报告 sh/app_process 寄宿进程 —— 木马利用解释器寄生，需重启后复查
   6. 清除后重启，重新跑本检测确认干净
@@ -1601,6 +1821,7 @@ __DEVICEHUB_SCAN_EOF__
 # =================================================================
 while true; do
     show_header
+    show_system_status
     echo -e "${YELLOW}[  網絡情報與快速小抄 ]${NC}"
     echo -e " 1)  傳送門：打開 Telegram 官方發布源頭 (紙飛機群)"
     echo -e " 2)  查指令：查看 PC 端免 Root 隔空提取/雙分區刷入"
@@ -1621,9 +1842,9 @@ while true; do
     echo "-------------------------------------------------"
     echo -n "請輸入數字 (1-12): "
     read main_choice
-    
+
     main_choice=$(echo "$main_choice" | tr -d '\r\n\t ')
-    
+
     case "$main_choice" in
         1) tg_channels ;;
         2) show_header; echo -e "# =========================================
