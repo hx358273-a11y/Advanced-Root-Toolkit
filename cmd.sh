@@ -36,6 +36,28 @@ PURPLE='\e[1;35m'
 CYAN='\e[1;36m'
 NC='\e[0m'
 
+# 檢測 Android 系統版本與 SDK 級別
+check_android_version() {
+    # 1. 取得 Android 版本號 (例如: 14, 15, 16)
+    local ANDROID_VER=$(getprop ro.build.version.release 2>/dev/null)
+    
+    # 2. 取得 API / SDK 級別 (例如: 34, 35, 36)
+    local SDK_VER=$(getprop ro.build.version.sdk 2>/dev/null)
+
+    # 3. 組合顯示字串
+    local VER_STR="${RED}未知版本${NC}"
+    if [ -n "$ANDROID_VER" ]; then
+        if [ -n "$SDK_VER" ]; then
+            VER_STR="${GREEN}Android ${ANDROID_VER} (API ${SDK_VER})${NC}"
+        else
+            VER_STR="${GREEN}Android ${ANDROID_VER}${NC}"
+        fi
+    fi
+
+    # 4. 輸出結果 (可依你其他函數的排版調整)
+    echo -e "${GREEN}系統版本 : ${VER_STR}"
+}
+
 # 檢測 Android 現代核心架構與分區指標
 check_android_architecture_status() {
     # 1. Project Treble & VNDK 檢測
@@ -238,7 +260,7 @@ check_root_solution() {
         echo -e "${GREEN}[核心狀態] ROOT 方案為: KernelSU / SukiSU 分支${NC}"
         
     elif su -c "[ -f /data/adb/apd ]" >/dev/null 2>&1; then
-        echo -e "${YELLOW}[核心狀態] ROOT 方案為: APatch 方案${NC}"
+        echo -e "${YELLOW}[核心狀態] ROOT 方案為: APatch / Folk patch分支${NC}"
         
     elif su -c "[ -f /data/adb/magisk.db ]" >/dev/null 2>&1; then
         echo -e "${YELLOW}[核心狀態] ROOT 方案為: 傳統阿爾法面具 (Magisk Alpha)${NC}"
@@ -323,6 +345,7 @@ show_header() {
 
 show_system_status() {
     # 僅由 1-12 主選單呼叫，其他子頁面不執行這些檢測。
+    check_android_version
     check_kernel_version
     check_device_model
     check_bl_integrity_status
@@ -565,10 +588,11 @@ kernelsu_family_menu() {
         echo -e " 10) ZySU 專區 (⚠️不支援 4.x & 5.x 內核)"
         echo -e " 11) FinaSU"
         echo -e " 12) Dafeiyu_KSU"
-        echo -e " 13) 直達 KernelSU 基礎主目錄"
+        echo -e " 13) XECKernelPro"
+        echo -e " 14) 直達 KernelSU 基礎主目錄"
         echo -e " 0)  返回上級選單"
         echo "-------------------------------------------------"
-        echo -n "請輸入編號 (0-13): "
+        echo -n "請輸入編號 (0-14): "
         read ksu_choice
         ksu_choice=$(echo "$ksu_choice" | tr -d '\r\n\t ')
 
@@ -672,7 +696,8 @@ kernelsu_family_menu() {
             10) scan_and_install "$R/ZySU (Unsupported on Kernel v4.x & v5.x !!!)/" ;;
             11) scan_and_install "$R/FinaSU/" ;;
             12) scan_and_install "$R/Dafeiyu_KSU/" ;;
-            13) scan_and_install "$R/" ;;
+            13) scan_and_install "$R/XECKernelPro/" ;;
+            14) scan_and_install "$R/" ;;
             *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
         esac
     done
@@ -1826,21 +1851,18 @@ while true; do
     echo -e " 1)  傳送門：打開 Telegram 官方發布源頭 (紙飛機群)"
     echo -e " 2)  查指令：查看 PC 端免 Root 隔空提取/雙分區刷入"
     echo -e " 3)  保命區：高通 / 天璣字庫與基帶備份還原小抄"
-    echo ""
     echo -e "${YELLOW}[  系統增強與檢測軟體區 ]${NC}"
     echo -e " 4)  進入：手機常用工具組 (Android_Phone_Utilities)"
-    echo -e " 5)  進入：手機視角傳電腦端 (Mobile phone to computer software)"
-    echo -e " 6)  進入：環境檢測工具防線 (Environment_Check_Apps)"
-    echo ""
+    echo -e " 5)  進入：環境檢測工具防線 (Environment_Check_Apps)"
     echo -e "${YELLOW}[  高階大師控端專區 ]${NC}"
-    echo -e " 7）  進入：四大 Root 面具大本營 (阿爾法/SK/KSU/AP)"
-    echo -e " 8)  進入：高級 Magisk / KSU 玩機模組分類庫"
-    echo -e " 9)  進入：硬核玩機 Root_Tools_Pack 工具箱"
-    echo -e " 10) 綜合安全檢測（Inte.ko + 遠控病毒）"
-    echo -e " 11) shell腳本混淆"
-    echo -e " 12) 安全退出工具箱"
+    echo -e " 6）  進入：四大 Root 面具大本營 (阿爾法/SK/KSU/AP)"
+    echo -e " 7)  進入：高級 Magisk / KSU 玩機模組分類庫"
+    echo -e " 8)  進入：硬核玩機 Root_Tools_Pack 工具箱"
+    echo -e " 9) 綜合安全檢測（Inte.ko + 遠控病毒）"
+    echo -e " 10) shell腳本混淆"
+    echo -e " 11) 安全退出工具箱"
     echo "-------------------------------------------------"
-    echo -n "請輸入數字 (1-12): "
+    echo -n "請輸入數字 (1-11): "
     read main_choice
 
     main_choice=$(echo "$main_choice" | tr -d '\r\n\t ')
@@ -2021,14 +2043,13 @@ echo -n "按任意鍵返回..."
 read -n 1
 ;;
            4) scan_and_install "Android_Phone_Utilities/" ;;
-           5) scan_and_install "Android_Phone_Utilities/Mobile phone to computer software/" ;;
-           6) scan_and_install "Environment_Check_Apps/" ;;
-           7) root_mask_menu ;;
-           8) advanced_modules_menu ;;
-           9) root_tools_pack_menu ;;
-          10) run_security_scans ;;
-          11) shell_obfuscation;;
-          12) echo "已安全退出頂級搞機軍火庫。"; exit 0 ;;
+           5) scan_and_install "Environment_Check_Apps/" ;;
+           6) root_mask_menu ;;
+           7) advanced_modules_menu ;;
+           8) root_tools_pack_menu ;;
+          9) run_security_scans ;;
+          10) shell_obfuscation;;
+          11) echo "已安全退出頂級搞機軍火庫。"; exit 0 ;;
 *) echo -e "${RED}無效輸入！您的輸入為: [$main_choice]${NC}" ; sleep 1.5 ;;
 esac
 done
