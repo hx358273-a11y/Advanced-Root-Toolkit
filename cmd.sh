@@ -16,6 +16,8 @@ fi
 
 # 基礎絕對路徑定案
 BASE_DIR="${INTERNAL_STORAGE}/Download/Root_Collection_All"
+# 基帶 / 字庫備份輸出資料夾
+BB_ROOT="${INTERNAL_STORAGE}/Download/基帶"
 
 # 暫存目錄：優先使用 Android shell 暫存區；非 Root/Termux 環境則回退到 TMPDIR。
 TEMP_DIR="/data/local/tmp"
@@ -35,6 +37,19 @@ BLUE='\e[1;34m'
 PURPLE='\e[1;35m'
 CYAN='\e[1;36m'
 NC='\e[0m'
+
+# 按任意鍵繼續（取代 read -n 1；mksh / 老舊 sh 也能用）
+pause_key() {
+    _pk_old=$(stty -g 2>/dev/null)
+    if [ -n "$_pk_old" ]; then
+        stty -icanon -echo min 1 time 0 2>/dev/null
+        dd bs=1 count=1 >/dev/null 2>&1
+        stty "$_pk_old" 2>/dev/null
+    else
+        read _pk_dummy
+    fi
+    echo
+}
 
 # 檢測 Android 系統版本與 SDK 級別
 check_android_version() {
@@ -109,35 +124,19 @@ check_android_architecture_status() {
     echo -e "${CYAN}[系統資訊] System-as-root: ${SAR_STR}"
 }
 
-# SELinux 狀態檢測與自動修復
+# SELinux 狀態檢測（僅讀取）
 check_selinux() {
     local STATUS
-    # 檢查是否擁有 Root 權限
     if [ "$(id -u 2>/dev/null)" != 0 ]; then
-        echo -e "${YELLOW}[提示] 非 Root 執行；部分狀態可能無法讀取與修改。${NC}"
+        echo -e "${YELLOW}[提示] 非 Root 執行；部分狀態可能無法讀取。${NC}"
     fi
 
     STATUS=$(getenforce 2>/dev/null)
     [ -n "$STATUS" ] || STATUS="未知"
-    
-    echo -e "${CYAN}[系統狀態] 目前 SELinux 狀態為：${YELLOW}$STATUS${NC}"
 
-    # 如果狀態是 Permissive（寬容），則自動修正為 Enforcing（強制）
-    if [ "$STATUS" = "Permissive" ]; then
-        echo -e "${YELLOW}[自動修復] 檢測到寬容模式，正在嘗試修正為強制模式...${NC}"
-        if setenforce 1 2>/dev/null; then
-            # 重新確認修改後的狀態
-            NEW_STATUS=$(getenforce 2>/dev/null)
-            echo -e "${GREEN}[修復成功] SELinux 已成功切換為：${YELLOW}$NEW_STATUS${NC}"
-        else
-            echo -e "${RED}[修復失敗] 無法寫入設定，請檢查是否擁有足夠的 Root 權限。${NC}"
-        fi
-    elif [ "$STATUS" = "Enforcing" ]; then
-        echo -e "${GREEN}[核心狀態] SELinux 已處於強制模式，無需修改。${NC}"
-    else
-        echo -e "${RED}[核心狀態] SELinux 處於未知或已停用 (Disabled) 狀態，無法直接切換。${NC}"
-    fi
+    echo -e "${CYAN}[系統狀態] 目前 SELinux 狀態為：${YELLOW}$STATUS${NC}"
 }
+
 
 # Zygisk Next (zn-daemon) 進程狀態即時監測
 check_zygisk_status() {
@@ -360,127 +359,205 @@ show_system_status() {
     echo ""
 }
 
-# 掃描與安裝核心函數
-scan_and_install() (
-    local sub_folder="$1"
-    local target_path=""
+# =================================================================
+# 掃描與安裝核心：APK 與 Root 模組 ZIP 共用同一套流程
+#   - APK  → pm install
+#   - ZIP  → 自動交給 KernelSU / APatch / Magisk 安裝
+# =================================================================
+ROOT_MGR=""
 
-    if echo "$sub_folder" | grep -q "^/"; then
-        target_path="$sub_folder"
-    else
-        target_path="$BASE_DIR/$sub_folder"
+root_manager_label() {
+    case "$ROOT_MGR" in
+        ksu) echo "KernelSU 家族" ;;
+        apatch) echo "APatch" ;;
+        magisk) echo "Magisk" ;;
+        *) echo "未指定（安裝 ZIP 時自動偵測）" ;;
+    esac
+}
+
+choose_root_manager() {
+    echo -e "${YELLOW}請選擇 Root 管理器：${NC}"
+    echo " 1) 自動偵測"
+    echo " 2) KernelSU"
+    echo " 3) APatch"
+    echo " 4) Magisk"
+    echo " 0) 取消"
+    echo -n "請選擇 (0-4): "
+    read _cm_choice
+    case "$(echo "$_cm_choice" | tr -d '\r\n\t ')" in
+        1) detect_root_manager; ROOT_MGR="$DETECTED_MANAGER" ;;
+        2) ROOT_MGR="ksu" ;;
+        3) ROOT_MGR="apatch" ;;
+        4) ROOT_MGR="magisk" ;;
+        *) return 1 ;;
+    esac
+    [ -n "$ROOT_MGR" ]
+}
+
+ensure_root_manager() {
+    if [ -z "$ROOT_MGR" ]; then
+        detect_root_manager
+        ROOT_MGR="$DETECTED_MANAGER"
     fi
-
-    show_header
-    echo -e "${PURPLE}=== 當前分組：$(basename "$target_path") ===${NC}"
-    echo -e "正在掃描目錄: $target_path"
-    echo ""
-
-    if [ ! -d "$target_path" ]; then
-        echo -e "${RED}錯誤: 找不到該資料夾！請檢查路徑。${NC}"
-        echo -e "預期路徑為: $target_path"
-        echo "-------------------------------------------------"
-        echo -n "按任意鍵返回..."
-        read -n 1
-        return
+    if [ -z "$ROOT_MGR" ]; then
+        echo -e "${YELLOW}未能自動辨識 Root 管理器。${NC}"
+        choose_root_manager || { echo -e "${RED}已取消。${NC}"; return 1; }
     fi
+    return 0
+}
 
-    cd "$target_path" || return
-
-    local has_apk=0
-    for file in *.apk; do
-        if [ -f "$file" ]; then has_apk=1; break; fi
-    done
-
-    if [ "$has_apk" -eq 0 ]; then
-        echo -e "${YELLOW} 提示：該資料夾內目前沒有發現任何 APK 安裝包。${NC}"
-        echo "-------------------------------------------------"
-        echo -n "按任意鍵返回..."
-        read -n 1
-        return
+install_one_apk() {
+    local _apk="$1"
+    local _tmp="/data/local/tmp/root_collection_install_$$.apk"
+    local _out
+    printf "正在部署: %s ... " "$(basename "$_apk")"
+    if ! cp "$_apk" "$_tmp" 2>/dev/null; then
+        echo -e "[ ${RED}失敗：無法複製 APK 到暫存目錄${NC} ]"
+        return 1
     fi
+    chmod 600 "$_tmp" 2>/dev/null
+    _out=$(pm install -r "$_tmp" 2>&1)
+    if [ $? -eq 0 ]; then
+        echo -e "[ ${GREEN}成功${NC} ]"
+        rm -f "$_tmp"
+        return 0
+    fi
+    echo -e "[ ${RED}失敗${NC} ]"
+    echo "  原因: $_out"
+    rm -f "$_tmp"
+    return 1
+}
 
-    echo -e "${CYAN}可用的 APK 檔案列表：${NC}"
-    local count=1
-    for file in *.apk; do
-        [ -f "$file" ] || continue
-        echo -e "  [ ${YELLOW}$count${NC} ] $file"
-        count=$((count + 1))
-    done
+install_zip_module() {
+    ensure_root_manager || return 1
+    if ! root_run "id -u" >/dev/null 2>&1; then
+        echo -e "${RED}[錯誤] 無法取得 Root 權限，請先在 Root 管理器中授權本終端。${NC}"
+        return 1
+    fi
+    echo -e "${CYAN}使用管理器：$(root_manager_label)${NC}"
+    install_one_root_module "$1" "$ROOT_MGR"
+}
 
-    echo "-------------------------------------------------"
-    echo -e "輸入 [ ${YELLOW}數字${NC} ] 單獨安裝該編號的 APK"
-    echo -e "輸入 [ ${YELLOW}all${NC}  ] 一鍵批量安裝此分組下的所有 APK"
-    echo -e "輸入 [ ${YELLOW}0${NC}    ] 返回上級選單"
-    echo "-------------------------------------------------"
-    echo -n "請輸入指令: "
-    read apk_choice
-    apk_choice=$(echo "$apk_choice" | tr -d '\r\n\t ')
+scan_and_install() {
+    local _sub="$1"
+    local _depth="${2:-1}"
+    local _target _maxd _list _total _i _f _tag _choice _sel
+    local _ok _fail _skip
 
-    case "$apk_choice" in
-        0|"")
-            return
-            ;;
-        all)
-            echo -e "${YELLOW}\n 開始一鍵中轉靜默部署所有工具...${NC}"
-            for apk in *.apk; do
-                [ -e "$apk" ] || continue
-                echo -ne "正在傳輸並部署: $apk ... "
-                install_tmp="/data/local/tmp/root_collection_install_$$_${count}.apk"
-                if ! cp "$apk" "$install_tmp"; then
-                    echo -e "[ ${RED}失敗：無法複製 APK${NC} ]"
-                    continue
-                fi
-                chmod 600 "$install_tmp" 2>/dev/null
-                if pm install -r "$install_tmp"; then
-                    echo -e "[ ${GREEN}成功${NC} ]"
-                else
-                    echo -e "[ ${RED}失敗：請檢查簽名、版本或安裝權限${NC} ]"
-                fi
-                rm -f "$install_tmp"
-                count=$((count + 1))
-            done
-            echo -e "${GREEN}\n 該分組流程執行完畢！${NC}"
-            echo -n "按任意鍵返回..."
-            read -n 1
-            ;;
-        [1-9]|[1-9][0-9]|[1-9][0-9][0-9])
-            local match_count=1
-            local target_apk=""
-            for apk in *.apk; do
-                [ -f "$apk" ] || continue
-                if [ "$match_count" -eq "$apk_choice" ]; then target_apk="$apk"; break; fi
-                match_count=$((match_count + 1))
-            done
+    case "$_sub" in
+        /*) _target="$_sub" ;;
+        *)  _target="$BASE_DIR/$_sub" ;;
+    esac
+    while [ "${_target%/}" != "$_target" ]; do _target="${_target%/}"; done
+    [ -n "$_target" ] || _target="/"
+    _list="$TEMP_DIR/root_arsenal_scan_$$.txt"
 
-            if [ -n "$target_apk" ]; then
-                echo -e "${YELLOW}\n 正在中轉單獨安裝: $target_apk ...${NC}"
-                install_tmp="/data/local/tmp/root_collection_install_$$_single.apk"
-                if ! cp "$target_apk" "$install_tmp"; then
-                    echo -e "${RED} [失敗] 無法複製 APK 到暫存目錄。${NC}"
-                else
-                    chmod 600 "$install_tmp" 2>/dev/null
-                    if pm install -r "$install_tmp"; then
-                        echo -e "${GREEN} [成功] 安裝流程執行完畢！${NC}"
-                    else
-                        echo -e "${RED} [失敗] 安裝終止，請檢查簽名、版本或安裝權限。${NC}"
-                    fi
-                    rm -f "$install_tmp"
-                fi
-            else
-                echo -e "${RED}錯誤: 找不到該編號對應的 APK！${NC}"
-                sleep 1.5
-            fi
+    while true; do
+        show_header
+        if [ ! -d "$_target" ]; then
+            echo -e "${RED}錯誤: 找不到該資料夾！請檢查路徑。${NC}"
+            echo -e "預期路徑為: $_target"
             echo "-------------------------------------------------"
             echo -n "按任意鍵返回..."
-            read -n 1
-            ;;
-        *)
-            echo -e "${RED}輸入錯誤，請重新輸入！${NC}"
-            sleep 1
-            ;;
-    esac
-)
+            pause_key
+            rm -f "$_list"
+            return 1
+        fi
+
+        if [ "$_depth" -gt 1 ]; then _maxd=10; else _maxd=1; fi
+        find "$_target" -maxdepth "$_maxd" -type f \( -iname '*.apk' -o -iname '*.zip' \) 2>/dev/null | sort > "$_list"
+        _total=$(wc -l < "$_list" | tr -d ' ')
+        [ -n "$_total" ] || _total=0
+
+        echo -e "${PURPLE}=== 當前分組：$(basename "$_target") ===${NC}"
+        echo -e "掃描目錄: $_target"
+        if [ "$_depth" -gt 1 ]; then
+            echo -e "掃描範圍: ${YELLOW}含所有子資料夾${NC}"
+        else
+            echo "掃描範圍: 僅此資料夾"
+        fi
+        echo ""
+
+        if [ "$_total" -eq 0 ]; then
+            echo -e "${YELLOW} 提示：此範圍內沒有發現 APK 安裝包或 ZIP 模組。${NC}"
+        else
+            echo -e "${CYAN}可用檔案（共 $_total 個）：${NC}"
+            _i=1
+            while IFS= read -r _f; do
+                case "$_f" in
+                    *.[Aa][Pp][Kk]) _tag="${GREEN}APK${NC}" ;;
+                    *) _tag="${CYAN}ZIP${NC}" ;;
+                esac
+                echo -e "  [ ${YELLOW}$_i${NC} ] [$_tag] ${_f#"$_target"/}"
+                _i=$((_i + 1))
+            done < "$_list"
+        fi
+
+        echo "-------------------------------------------------"
+        echo -e "輸入 [ ${YELLOW}數字${NC} ] 安裝該項（APK 直接安裝；ZIP 交給 Root 管理器）"
+        echo -e "輸入 [ ${YELLOW}all${NC}  ] 一鍵安裝全部 APK（ZIP 模組為安全起見需逐個安裝）"
+        if [ "$_depth" -gt 1 ]; then
+            echo -e "輸入 [ ${YELLOW}s${NC}    ] 只掃描本資料夾"
+        else
+            echo -e "輸入 [ ${YELLOW}s${NC}    ] 同時掃描所有子資料夾"
+        fi
+        echo -e "輸入 [ ${YELLOW}0${NC}    ] 返回上級選單"
+        echo "-------------------------------------------------"
+        echo -n "請輸入指令: "
+        read _choice
+        _choice=$(echo "$_choice" | tr -d '\r\n\t ')
+
+        case "$_choice" in
+            0|"")
+                break
+                ;;
+            s|S)
+                if [ "$_depth" -gt 1 ]; then _depth=1; else _depth=2; fi
+                continue
+                ;;
+            all|ALL)
+                _ok=0; _fail=0; _skip=0
+                echo -e "${YELLOW}\n 開始批量安裝 APK...${NC}"
+                while IFS= read -r _f; do
+                    case "$_f" in
+                        *.[Aa][Pp][Kk])
+                            if install_one_apk "$_f" </dev/null; then
+                                _ok=$((_ok + 1))
+                            else
+                                _fail=$((_fail + 1))
+                            fi
+                            ;;
+                        *) _skip=$((_skip + 1)) ;;
+                    esac
+                done < "$_list"
+                echo -e "${GREEN}\n 批量完成：成功 $_ok 個、失敗 $_fail 個；略過 ZIP 模組 $_skip 個${NC}"
+                ;;
+            *[!0-9]*)
+                echo -e "${RED}輸入錯誤，請重新輸入！${NC}"
+                sleep 1
+                continue
+                ;;
+            *)
+                if [ "$_choice" -lt 1 ] || [ "$_choice" -gt "$_total" ]; then
+                    echo -e "${RED}編號超出範圍。${NC}"
+                    sleep 1
+                    continue
+                fi
+                _sel=$(sed -n "${_choice}p" "$_list")
+                echo ""
+                case "$_sel" in
+                    *.[Aa][Pp][Kk]) install_one_apk "$_sel" ;;
+                    *) install_zip_module "$_sel" ;;
+                esac
+                ;;
+        esac
+        echo "-------------------------------------------------"
+        echo -n "按任意鍵繼續..."
+        pause_key
+    done
+    rm -f "$_list"
+    return 0
+}
 
 # 隱藏模組與 TEE 專用分流選單
 hide_modules_menu() {
@@ -518,9 +595,10 @@ advanced_modules_menu() {
         echo -e " 7)  元模組/核心依賴 (Meta Modules)"
         echo -e " 8)  一鍵安裝檢測軟體 (One-Click Installer)"
         echo -e " 9)  系統優化模塊 (Tweaks Modules)"
+        echo -e " 10)  XEC kernel Pro專用模塊(XEC kernel Pro_module)"
         echo -e " 0)  返回主選單"
         echo "-------------------------------------------------"
-        echo -n "請輸入編號 (0-9): "
+        echo -n "請輸入編號 (0-10): "
         read mod_choice
         mod_choice=$(echo "$mod_choice" | tr -d '\r\n\t ')
 
@@ -535,6 +613,7 @@ advanced_modules_menu() {
             7) scan_and_install "Magisk_Ksu_Modules/Meta Modules/" ;;
             8) scan_and_install "Magisk_Ksu_Modules/One-Click Installer & Checker/" ;;
             9) scan_and_install "Magisk_Ksu_Modules/Tweaks Modules/" ;;
+            10) scan_and_install "Magisk_Ksu_Modules/XEC kernel Pro_module/" ;;
             *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
         esac
     done
@@ -914,7 +993,7 @@ EOF
     echo -e "${green}加密执行完成！${reset}"
     echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
     echo -n "按任意键返回主菜单..."
-    read -n 1
+    pause_key
     return
 fi
 
@@ -948,7 +1027,7 @@ EOF
     echo -e "${green}加密执行完成！${reset}"
     echo -e "${cyan}输出路径：${SRC_PATH}${reset}"
     echo -n "按任意键返回主菜单..."
-    read -n 1
+    pause_key
     return
 fi
 
@@ -1229,7 +1308,7 @@ run_security_scans() {
     echo "-------------------------------------------------"
     echo "檢測流程完成。Inte.ko 狀態碼：$inte_rc；遠控檢測狀態碼：$devicehub_rc"
     echo -n "按任意鍵返回主選單..."
-    IFS= read -r -n 1 _key
+    pause_key
     echo
 }
 
@@ -1840,6 +1919,479 @@ exit $RC
 __DEVICEHUB_SCAN_EOF__
 )
 
+# ==========================================
+# SELinux 狀態手動切換選單
+# ==========================================
+selinux_manage_menu() {
+    while true; do
+        clear
+        show_header
+        
+        # 每次進入或操作後重新讀取最新狀態
+        local CUR_STATUS
+        CUR_STATUS=$(getenforce 2>/dev/null)
+        [ -n "$CUR_STATUS" ] || CUR_STATUS="未知"
+
+        echo -e "${CYAN}=========================================${NC}"
+        echo -e "${GREEN}           SELinux 狀態管理中心          ${NC}"
+        echo -e "${CYAN}=========================================${NC}"
+        echo -e "目前系統 SEL 狀態為：${YELLOW}${CUR_STATUS}${NC}"
+        echo "-----------------------------------------"
+        echo -e " 1) 修改為 ${GREEN}強制執行 (Enforcing)${NC}"
+        echo -e " 2) 修改為 ${YELLOW}寬容模式 (Permissive)${NC}"
+        echo -e " 0) 返回主選單"
+        echo "-----------------------------------------"
+        echo -n "請輸入選項 (0-2): "
+        read sel_choice
+
+        case "$sel_choice" in
+            1)
+                if [ "$CUR_STATUS" = "Enforcing" ]; then
+                    echo -e "\n${RED}錯誤，你的SEL狀態已經為強制執行${NC}"
+                elif [ "$CUR_STATUS" = "Permissive" ]; then
+                    if setenforce 1 2>/dev/null; then
+                        echo -e "\n${GREEN}[成功] SELinux 已成功切換為：強制執行 (Enforcing)${NC}"
+                    else
+                        echo -e "\n${RED}[失敗] 無法修改狀態，請確認是否已授予 Root 權限！${NC}"
+                    fi
+                else
+                    echo -e "\n${RED}[錯誤] 目前 SELinux 處於未知或已停用 (Disabled) 狀態，無法直接切換。${NC}"
+                fi
+                echo ""
+                echo -n "按任意鍵繼續..."
+                pause_key
+                ;;
+            2)
+                if [ "$CUR_STATUS" = "Permissive" ]; then
+                    echo -e "\n${RED}錯誤，你的SEL狀態已經為寬容模式${NC}"
+                elif [ "$CUR_STATUS" = "Enforcing" ]; then
+                    if setenforce 0 2>/dev/null; then
+                        echo -e "\n${GREEN}[成功] SELinux 已成功切換為：寬容模式 (Permissive)${NC}"
+                    else
+                        echo -e "\n${RED}[失敗] 無法修改狀態，請確認是否已授予 Root 權限！${NC}"
+                    fi
+                else
+                    echo -e "\n${RED}[錯誤] 目前 SELinux 處於未知或已停用 (Disabled) 狀態，無法直接切換。${NC}"
+                fi
+                echo ""
+                echo -n "按任意鍵繼續..."
+                pause_key
+                ;;
+            0)
+                break
+                ;;
+            *)
+                echo -e "\n${RED}無效輸入！請輸入 0 到 2 之間的數字。${NC}"
+                sleep 1.5
+                ;;
+        esac
+    done
+}
+
+
+# =================================================================
+# Root 模組安裝中心：KernelSU / APatch / Magisk
+# 僅安裝已存在 Root 管理器中的 ZIP 模組；不會自行刷寫 boot/init_boot。
+# =================================================================
+root_run() {
+    _root_command="$1"
+    if [ "$(id -u 2>/dev/null)" = "0" ]; then
+        sh -c "$_root_command"
+    elif command -v su >/dev/null 2>&1; then
+        su -c "$_root_command"
+    else
+        return 1
+    fi
+}
+
+root_file_exists() {
+    root_run "[ -f '$1' ]"
+}
+
+# 將任意檔案路徑安全轉成單引號 shell 參數，避免空格或特殊字元造成命令解析錯誤。
+shell_quote() {
+    printf "'"
+    printf "%s" "$1" | sed "s/'/'\\\\''/g"
+    printf "'"
+}
+
+detect_root_manager() {
+    DETECTED_MANAGER=""
+    if root_file_exists "/data/adb/ksud"; then
+        DETECTED_MANAGER="ksu"
+    elif root_file_exists "/data/adb/apd"; then
+        DETECTED_MANAGER="apatch"
+    elif root_file_exists "/data/adb/magisk.db"; then
+        DETECTED_MANAGER="magisk"
+    fi
+}
+
+install_one_root_module() {
+    _zip="$1"
+    _manager="$2"
+    _install_tmp="/data/local/tmp/root_arsenal_module_$$.zip"
+
+    if [ ! -f "$_zip" ]; then
+        echo -e "${RED}[錯誤] ZIP 檔案不存在。${NC}"
+        return 1
+    fi
+
+    if ! command -v unzip >/dev/null 2>&1; then
+        echo -e "${RED}[錯誤] 找不到 unzip，無法檢查模組壓縮包。${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}正在檢查 ZIP 完整性...${NC}"
+    if ! unzip -t "$_zip" >/dev/null 2>&1; then
+        echo -e "${RED}[失敗] ZIP 壓縮包損壞或格式不正確。${NC}"
+        return 1
+    fi
+
+    if ! unzip -l "$_zip" 2>/dev/null | grep -q 'module.prop'; then
+        echo -e "${YELLOW}[警告] ZIP 內未找到 module.prop，可能不是標準 Root 模組。${NC}"
+        echo -n "仍要交給管理器嘗試安裝嗎？(y/N): "
+        read _confirm
+        case "$_confirm" in y|Y|yes|YES) ;; *) echo "已取消。"; return 1 ;; esac
+    fi
+
+    echo -e "${YELLOW}[安全提醒] Root 模組可能執行具高權限的安裝腳本。只安裝你已確認來源可信的檔案。${NC}"
+    echo -n "確認安裝 $(basename "$_zip")？(y/N): "
+    read _confirm
+    case "$_confirm" in y|Y|yes|YES) ;; *) echo "已取消。"; return 1 ;; esac
+
+    if ! root_run "mkdir -p /data/local/tmp && chmod 755 /data/local/tmp"; then
+        echo -e "${RED}[失敗] 無法取得 Root 權限或建立暫存目錄。${NC}"
+        return 1
+    fi
+
+    _quoted_zip=$(shell_quote "$_zip")
+    if ! root_run "cp $_quoted_zip '$_install_tmp'"; then
+        echo -e "${RED}[失敗] 無法將模組複製到 Root 暫存目錄。${NC}"
+        return 1
+    fi
+    root_run "chmod 600 '$_install_tmp'" >/dev/null 2>&1
+
+    case "$_manager" in
+        ksu)
+            _cmd="if [ -x /data/adb/ksud ]; then /data/adb/ksud module install '$_install_tmp'; elif command -v ksud >/dev/null 2>&1; then ksud module install '$_install_tmp'; else echo '找不到 ksud'; exit 127; fi"
+            ;;
+        apatch)
+            _cmd="if [ -x /data/adb/apd ]; then /data/adb/apd module install '$_install_tmp'; elif [ -x /data/adb/ap/bin/apd ]; then /data/adb/ap/bin/apd module install '$_install_tmp'; elif command -v apd >/dev/null 2>&1; then apd module install '$_install_tmp'; else echo '找不到 apd'; exit 127; fi"
+            ;;
+        magisk)
+            _cmd="if command -v magisk >/dev/null 2>&1; then magisk --install-module '$_install_tmp'; elif [ -x /data/adb/magisk/magisk ]; then /data/adb/magisk/magisk --install-module '$_install_tmp'; else echo '找不到 magisk'; exit 127; fi"
+            ;;
+        *)
+            echo -e "${RED}[錯誤] 未知 Root 管理器。${NC}"
+            root_run "rm -f '$_install_tmp'" >/dev/null 2>&1
+            return 1
+            ;;
+    esac
+
+    echo -e "${CYAN}正在呼叫 ${_manager} 模組安裝程序...${NC}"
+    if root_run "$_cmd"; then
+        echo -e "${GREEN}[已送出] 管理器已回報安裝命令成功。請查看管理器日誌，並依模組要求重新啟動。${NC}"
+        _result=0
+    else
+        echo -e "${RED}[失敗] 管理器安裝命令失敗。APatch 的 CLI 安裝在部分裝置可能遇到相容性問題，請改用 APatch 管理器檢查日誌。${NC}"
+        _result=1
+    fi
+
+    root_run "rm -f '$_install_tmp'" >/dev/null 2>&1
+    return "$_result"
+}
+
+root_module_install_center() {
+    local _mc_choice _mc_path
+    while true; do
+        show_header
+        echo -e "${PURPLE}=== Root 模組安裝中心 ===${NC}"
+        echo -e "支援：KernelSU / APatch / Magisk（與 APK 共用同一套掃描）"
+        echo -e "模組庫：${YELLOW}$BASE_DIR/Magisk_Ksu_Modules${NC}"
+        echo -e "目前使用：${GREEN}$(root_manager_label)${NC}"
+        echo ""
+        echo " 1) 瀏覽模組分類庫（隱藏 / 救磚 / LSPosed / 優化...）"
+        echo " 2) 掃描整個模組庫（含所有子資料夾）"
+        echo " 3) 自訂路徑（輸入資料夾，或直接輸入單一 ZIP / APK）"
+        echo " 4) 指定 / 切換 Root 管理器"
+        echo " 0) 返回主選單"
+        echo "-------------------------------------------------"
+        echo -n "請選擇 (0-4): "
+        read _mc_choice
+        _mc_choice=$(echo "$_mc_choice" | tr -d '\r\n\t ')
+
+        case "$_mc_choice" in
+            0|"") break ;;
+            1) advanced_modules_menu ;;
+            2) scan_and_install "Magisk_Ksu_Modules/" 2 ;;
+            3)
+                echo "可輸入絕對路徑，或相對於 $BASE_DIR 的路徑"
+                echo -n "路徑: "
+                IFS= read -r _mc_path
+                _mc_path=$(printf '%s' "$_mc_path" | tr -d '\r\n' | sed "s/^[\"' ]*//;s/[\"' ]*\$//")
+                [ -n "$_mc_path" ] || continue
+                case "$_mc_path" in
+                    /*) ;;
+                    *) _mc_path="$BASE_DIR/$_mc_path" ;;
+                esac
+                if [ -f "$_mc_path" ]; then
+                    echo ""
+                    case "$_mc_path" in
+                        *.[Aa][Pp][Kk]) install_one_apk "$_mc_path" ;;
+                        *.[Zz][Ii][Pp]) install_zip_module "$_mc_path" ;;
+                        *) echo -e "${RED}只支援 .apk 與 .zip 檔案。${NC}" ;;
+                    esac
+                    echo "-------------------------------------------------"
+                    echo -n "按任意鍵繼續..."
+                    pause_key
+                else
+                    scan_and_install "$_mc_path"
+                fi
+                ;;
+            4) choose_root_manager && echo -e "${GREEN}已設定：$(root_manager_label)${NC}"; sleep 1 ;;
+            *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# =================================================================
+# 基帶 / 字庫 / 關鍵分區 一鍵備份
+# 輸出：Download/基帶/備份_日期時間/（唯讀 dd 備份，不會寫入任何分區）
+# =================================================================
+_bb_has() { printf '%s\n' "$_bb_all" | grep -qx "$1"; }
+
+backup_baseband() {
+    local _byname _cpu _cands _plan _okfile _dir _stamp _model _plat _slot
+    local _p _base _n _sz _src _out _osz _mb _total_mb _free_mb _ok _fail _confirm
+    local _disks _d _part _ddargs _sec _rm _gpt_n
+
+    show_header
+    echo -e "${PURPLE}=== 基帶 / 字庫 / 關鍵分區 一鍵備份 ===${NC}"
+    echo -e "備份位置：${YELLOW}$BB_ROOT${NC}"
+    echo ""
+
+    if ! root_run "id -u" >/dev/null 2>&1; then
+        echo -e "${RED}[錯誤] 無法取得 Root 權限，請先在 Root 管理器中授權本終端。${NC}"
+        echo -n "按任意鍵返回..."; pause_key
+        return 1
+    fi
+
+    _byname=$(root_run 'for d in /dev/block/by-name /dev/block/bootdevice/by-name /dev/block/platform/*/by-name /dev/block/platform/*/*/by-name; do [ -d "$d" ] && { echo "$d"; break; }; done' 2>/dev/null | tr -d '\r')
+    if [ -z "$_byname" ]; then
+        echo -e "${RED}[錯誤] 找不到 by-name 分區目錄，無法識別分區。${NC}"
+        echo -n "按任意鍵返回..."; pause_key
+        return 1
+    fi
+    _bb_all=$(root_run "ls '$_byname'" 2>/dev/null | tr -d '\r')
+
+    # 以實際存在的分區判斷平台（比機型代號更可靠）
+    if _bb_has modemst1 || _bb_has modemst2 || _bb_has fsg; then
+        _cpu="qcom"
+        _cands="modemst1 modemst2 fsg fsc persist persistbak devinfo modem bluetooth dsp sec ssd"
+    elif _bb_has nvram || _bb_has nvdata || _bb_has protect1 || _bb_has seccfg; then
+        _cpu="mtk"
+        _cands="nvram nvdata nvcfg persist protect1 protect2 seccfg sec1 proinfo md_sec md1img md1dsp md3img preloader preloader_raw"
+    else
+        _cpu="generic"
+        _cands="persist modem nvram nvdata nvcfg protect1 protect2 seccfg modemst1 modemst2 fsg fsc devinfo"
+    fi
+    # 三星 EFS 類分區、一加 / OPPO 的 OCDT 分區（沒有的機型會自動略過）
+    _cands="$_cands efs sec_efs cpefs ocdt"
+
+    _model=$(getprop ro.product.model 2>/dev/null)
+    _plat=$(getprop ro.board.platform 2>/dev/null)
+    _slot=$(getprop ro.boot.slot_suffix 2>/dev/null)
+    case "$_cpu" in
+        qcom) echo -e "識別結果：${GREEN}高通 (Snapdragon)${NC}" ;;
+        mtk)  echo -e "識別結果：${GREEN}聯發科 (MTK / 天璣)${NC}" ;;
+        *)    echo -e "識別結果：${YELLOW}未能確定平台，改用通用清單${NC}" ;;
+    esac
+    echo "機型: ${_model:-?}   平台代號: ${_plat:-?}   當前槽位: ${_slot:-無 A/B}"
+    echo "分區目錄: $_byname"
+    echo ""
+
+    # 建立備份清單：名稱|大小(bytes)|來源
+    _plan="$TEMP_DIR/bb_plan_$$.txt"
+    _okfile="$TEMP_DIR/bb_ok_$$.txt"
+    : > "$_plan"
+    for _base in $_cands; do
+        for _p in "$_base" "${_base}_a" "${_base}_b"; do
+            _bb_has "$_p" || continue
+            grep -q "^${_p}|" "$_plan" && continue
+            _sz=$(root_run "blockdev --getsize64 '$_byname/$_p' 2>/dev/null" </dev/null | tr -d '\r\n ')
+            case "$_sz" in ''|*[!0-9]*) _sz=0 ;; esac
+            echo "${_p}|${_sz}|${_byname}/${_p}" >> "$_plan"
+        done
+    done
+    # eMMC 機型的 preloader 啟動分區
+    for _p in mmcblk0boot0 mmcblk0boot1; do
+        if root_run "[ -b /dev/block/$_p ]" </dev/null; then
+            _sz=$(root_run "blockdev --getsize64 /dev/block/$_p 2>/dev/null" </dev/null | tr -d '\r\n ')
+            case "$_sz" in ''|*[!0-9]*) _sz=0 ;; esac
+            echo "preloader_${_p#mmcblk0}|${_sz}|/dev/block/$_p" >> "$_plan"
+        fi
+    done
+
+    # 整顆磁碟（GPT 分區表所在）：UFS 的 sda~sdh 或 eMMC 的 mmcblk0，排除可移除裝置
+    _disks=""
+    for _d in sda sdb sdc sdd sde sdf sdg sdh mmcblk0; do
+        root_run "[ -b /dev/block/$_d ]" </dev/null || continue
+        _rm=$(root_run "cat /sys/block/$_d/removable 2>/dev/null" </dev/null | tr -d '\r\n ')
+        [ "$_rm" = "1" ] && continue
+        _disks="$_disks $_d"
+    done
+
+    if [ ! -s "$_plan" ] && [ -z "$_disks" ]; then
+        echo -e "${RED}[錯誤] 沒有找到任何可備份的基帶 / 字庫分區。${NC}"
+        rm -f "$_plan" "$_okfile"
+        echo -n "按任意鍵返回..."; pause_key
+        return 1
+    fi
+
+    echo -e "${CYAN}將備份以下分區：${NC}"
+    _total_mb=0
+    while IFS='|' read -r _n _sz _src; do
+        [ -n "$_n" ] || continue
+        if [ "$_sz" != "0" ]; then
+            _mb=$(( _sz / 1048576 ))
+            _total_mb=$(( _total_mb + _mb ))
+            printf "  %-20s %6s MB\n" "$_n" "$_mb"
+        else
+            printf "  %-20s %6s\n" "$_n" "?"
+        fi
+    done < "$_plan"
+    _gpt_n=0
+    for _d in $_disks; do _gpt_n=$((_gpt_n + 1)); done
+    if [ "$_gpt_n" -gt 0 ]; then
+        _total_mb=$(( _total_mb + _gpt_n * 2 ))
+        echo -e "  ${CYAN}GPT 分區表（每顆磁碟前後各 1MB）：${NC}$_disks"
+    fi
+    echo ""
+    echo -e "預估總大小：約 ${YELLOW}${_total_mb} MB${NC}"
+
+    set -- $(df -k "$INTERNAL_STORAGE" 2>/dev/null | tail -n 1)
+    _free_mb=$(( ${4:-0} / 1024 ))
+    if [ "$_free_mb" -gt 0 ] && [ "$_free_mb" -lt $(( _total_mb + 50 )) ]; then
+        echo -e "${RED}[錯誤] 儲存空間不足：剩餘約 ${_free_mb} MB。${NC}"
+        rm -f "$_plan" "$_okfile"
+        echo -n "按任意鍵返回..."; pause_key
+        return 1
+    fi
+
+    echo -n "開始備份？此操作只讀取分區，不會修改手機 (Y/n): "
+    read _confirm
+    case "$(echo "$_confirm" | tr -d '\r\n\t ')" in
+        n|N|no|NO) echo "已取消。"; rm -f "$_plan" "$_okfile"; sleep 1; return 0 ;;
+    esac
+
+    _stamp=$(date +%Y%m%d_%H%M%S)
+    _dir="$BB_ROOT/備份_${_stamp}"
+    mkdir -p "$_dir" 2>/dev/null || root_run "mkdir -p '$_dir'"
+    root_run "chmod 777 '$BB_ROOT' '$_dir'" >/dev/null 2>&1
+    if [ ! -d "$_dir" ]; then
+        echo -e "${RED}[錯誤] 無法建立備份資料夾：$_dir${NC}"
+        rm -f "$_plan" "$_okfile"
+        echo -n "按任意鍵返回..."; pause_key
+        return 1
+    fi
+
+    echo ""
+    _ok=0; _fail=0; : > "$_okfile"
+    while IFS='|' read -r _n _sz _src; do
+        [ -n "$_n" ] || continue
+        _out="$_dir/${_n}.img"
+        printf "  備份 %-20s " "$_n"
+        if root_run "dd if='$_src' of='$_out' bs=1048576 2>/dev/null" </dev/null; then
+            _osz=$(root_run "wc -c < '$_out'" </dev/null | tr -d '\r\n ')
+            if [ -n "$_osz" ] && [ "$_osz" != "0" ] && { [ "$_sz" = "0" ] || [ "$_osz" = "$_sz" ]; }; then
+                echo -e "[ ${GREEN}OK${NC} ]"
+                echo "${_n}|${_src}" >> "$_okfile"
+                _ok=$((_ok + 1))
+                continue
+            fi
+        fi
+        echo -e "[ ${RED}失敗${NC} ]"
+        root_run "rm -f '$_out'" </dev/null >/dev/null 2>&1
+        _fail=$((_fail + 1))
+    done < "$_plan"
+
+    # GPT 分區表：每顆磁碟備份前 1MB（主 GPT）與最後 1MB（備份 GPT）
+    for _d in $_disks; do
+        for _part in head tail; do
+            _out="$_dir/gpt_${_d}_${_part}.bin"
+            printf "  備份 %-20s " "gpt_${_d}_${_part}"
+            _ddargs=""
+            if [ "$_part" = "head" ]; then
+                _ddargs="if=/dev/block/$_d of='$_out' bs=512 count=2048"
+            else
+                _sec=$(root_run "blockdev --getsz /dev/block/$_d 2>/dev/null" </dev/null | tr -d '\r\n ')
+                case "$_sec" in ''|*[!0-9]*) _sec=0 ;; esac
+                if [ "$_sec" -gt 4096 ]; then
+                    _ddargs="if=/dev/block/$_d of='$_out' bs=512 skip=$((_sec - 2048)) count=2048"
+                fi
+            fi
+            if [ -n "$_ddargs" ] && root_run "dd $_ddargs 2>/dev/null" </dev/null; then
+                _osz=$(root_run "wc -c < '$_out'" </dev/null | tr -d '\r\n ')
+                if [ "$_osz" = "1048576" ]; then
+                    echo -e "[ ${GREEN}OK${NC} ]"
+                    echo "gpt_${_d}_${_part}|gpt:/dev/block/${_d}:${_part}" >> "$_okfile"
+                    _ok=$((_ok + 1))
+                    continue
+                fi
+            fi
+            echo -e "[ ${RED}失敗${NC} ]"
+            root_run "rm -f '$_out'" </dev/null >/dev/null 2>&1
+            _fail=$((_fail + 1))
+        done
+    done
+
+    # 校驗碼與權限
+    root_run "cd '$_dir' && sha256sum *.img *.bin > SHA256SUM.txt 2>/dev/null; chmod 666 '$_dir'/* 2>/dev/null" </dev/null >/dev/null 2>&1
+
+    # 備份資訊
+    {
+        echo "備份時間: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "機型: ${_model:-?}"
+        echo "平台代號: ${_plat:-?}  識別: $_cpu"
+        echo "Android: $(getprop ro.build.version.release 2>/dev/null)  當前槽位: ${_slot:-無}"
+        echo "指紋: $(getprop ro.build.fingerprint 2>/dev/null)"
+        echo ""
+        echo "已備份分區："
+        while IFS='|' read -r _n _src; do echo "  $_n  <-  $_src"; done < "$_okfile"
+    } > "$_dir/備份資訊.txt" 2>/dev/null
+
+    # 還原說明
+    {
+        echo "【還原說明】僅限「同一台手機」使用本備份，刷錯機型或刷壞分區可能導致無法開機或永久失去信號。"
+        echo "使用 fastboot 還原前，請先進入 fastbootd（adb reboot bootloader 後執行 fastboot reboot fastboot）。"
+        echo "【GPT 注意】gpt_*_head.bin / gpt_*_tail.bin 是整顆磁碟前後各 1MB 的原始資料，範圍內可能包含分區資料本身，"
+        echo "不要直接 dd 整段寫回磁碟。它們用於比對分區表是否被改動，或交給熟悉的人以 sgdisk 等工具只還原 GPT 表本身。"
+        echo ""
+        while IFS='|' read -r _n _src; do
+            case "$_src" in
+                /dev/block/mmcblk0boot*)
+                    echo "# ${_n}（eMMC 啟動分區，Root 下執行）"
+                    echo "echo 0 > /sys/block/${_src#/dev/block/}/force_ro"
+                    echo "dd if=${_dir}/${_n}.img of=${_src}"
+                    ;;
+                gpt:*)
+                    echo "# ${_n}（GPT 分區表備份，僅供參考 / 最後手段）"
+                    ;;
+                *) echo "fastboot flash ${_n} ${_n}.img" ;;
+            esac
+        done < "$_okfile"
+    } > "$_dir/還原說明.txt" 2>/dev/null
+
+    rm -f "$_plan" "$_okfile"
+    echo ""
+    echo "-------------------------------------------------"
+    echo -e "完成：成功 ${GREEN}$_ok${NC} 個，失敗 ${RED}$_fail${NC} 個"
+    echo -e "備份目錄：${YELLOW}$_dir${NC}"
+    echo -e "${YELLOW}提醒：請把整個資料夾複製到電腦或雲端，只留在手機裡，刷機或救磚時可能一起被清掉。${NC}"
+    echo "-------------------------------------------------"
+    echo -n "按任意鍵返回..."
+    pause_key
+}
 
 # =================================================================
 # 系統主選單迴圈 (已置於最底部，保證所有函數都已提前載入)
@@ -1850,19 +2402,21 @@ while true; do
     echo -e "${YELLOW}[  網絡情報與快速小抄 ]${NC}"
     echo -e " 1)  傳送門：打開 Telegram 官方發布源頭 (紙飛機群)"
     echo -e " 2)  查指令：查看 PC 端免 Root 隔空提取/雙分區刷入"
-    echo -e " 3)  保命區：高通 / 天璣字庫與基帶備份還原小抄"
+    echo -e " 3)  保命區：高通 / 天璣字庫與基帶還原小抄"
+    echo -e " 4) 保命區：一鍵自動識別 CPU 並備份基帶字庫"
     echo -e "${YELLOW}[  系統增強與檢測軟體區 ]${NC}"
-    echo -e " 4)  進入：手機常用工具組 (Android_Phone_Utilities)"
-    echo -e " 5)  進入：環境檢測工具防線 (Environment_Check_Apps)"
+    echo -e " 5)  進入：手機常用工具組 (Android_Phone_Utilities)"
+    echo -e " 6)  進入：環境檢測工具防線 (Environment_Check_Apps)"
     echo -e "${YELLOW}[  高階大師控端專區 ]${NC}"
-    echo -e " 6）  進入：四大 Root 面具大本營 (阿爾法/SK/KSU/AP)"
-    echo -e " 7)  進入：高級 Magisk / KSU 玩機模組分類庫"
-    echo -e " 8)  進入：硬核玩機 Root_Tools_Pack 工具箱"
-    echo -e " 9) 綜合安全檢測（Inte.ko + 遠控病毒）"
-    echo -e " 10) shell腳本混淆"
-    echo -e " 11) 安全退出工具箱"
+    echo -e " 7)  進入：修改SEL狀態"
+    echo -e " 8)  進入：四大 Root 面具大本營 (阿爾法/SK/KSU/AP)"
+    echo -e " 9) Root 模組安裝中心 (KernelSU / APatch / Magisk)"
+    echo -e " 10)  進入：硬核玩機 Root_Tools_Pack 工具箱"
+    echo -e " 11) 綜合安全檢測（Inte.ko + 遠控病毒）"
+    echo -e " 12) shell腳本混淆"
+    echo -e " 13) 安全退出工具箱"
     echo "-------------------------------------------------"
-    echo -n "請輸入數字 (1-11): "
+    echo -n "請輸入數字 (1-13): "
     read main_choice
 
     main_choice=$(echo "$main_choice" | tr -d '\r\n\t ')
@@ -1940,7 +2494,7 @@ fastboot flash boot boot.img
 
 # 5. 重启系统
 fastboot reboot
-"; echo "-------------------------------------------------"; echo -n "按任意鍵返回..."; read -n 1 ;;
+"; echo "-------------------------------------------------"; echo -n "按任意鍵返回..."; pause_key ;;
         3) show_header; echo -e "# =========================================
 # 高通驍龍（Snapdragon）核心字庫保命還原指令
 # =========================================
@@ -2040,16 +2594,18 @@ fastboot reboot
 "
 echo "-------------------------------------------------"
 echo -n "按任意鍵返回..."
-read -n 1
+pause_key
 ;;
-           4) scan_and_install "Android_Phone_Utilities/" ;;
-           5) scan_and_install "Environment_Check_Apps/" ;;
-           6) root_mask_menu ;;
-           7) advanced_modules_menu ;;
-           8) root_tools_pack_menu ;;
-          9) run_security_scans ;;
-          10) shell_obfuscation;;
-          11) echo "已安全退出頂級搞機軍火庫。"; exit 0 ;;
+           4) backup_baseband;;
+           5) scan_and_install "Android_Phone_Utilities/" ;;
+           6) scan_and_install "Environment_Check_Apps/" ;;
+           7) selinux_manage_menu ;;
+           8) root_mask_menu ;;
+           9) root_module_install_center ;;
+          10) root_tools_pack_menu ;;
+          11) run_security_scans ;;
+          12) shell_obfuscation;;
+          13) echo "已安全退出頂級搞機軍火庫。"; exit 0 ;;
 *) echo -e "${RED}無效輸入！您的輸入為: [$main_choice]${NC}" ; sleep 1.5 ;;
 esac
 done
