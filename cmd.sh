@@ -336,7 +336,7 @@ show_header() {
     # 僅顯示標題；子選單呼叫時不重複執行裝置檢測。
     clear
     echo -e "${CYAN}==================================================${NC}"
-    echo -e "${GREEN}                頂級搞機軍火庫 (互動面板)        ${NC}"
+    echo -e "${GREEN} Ciallo～(∠・ω< )⌒★搞機cmd終端 ${NC}"
     echo -e "${CYAN}==================================================${NC}"
     echo -e "開發者：抖音user哥"
     echo ""
@@ -368,9 +368,9 @@ ROOT_MGR=""
 
 root_manager_label() {
     case "$ROOT_MGR" in
-        ksu) echo "KernelSU 家族" ;;
-        apatch) echo "APatch" ;;
-        magisk) echo "Magisk" ;;
+        ksu) echo "KernelSU 分支" ;;
+        apatch) echo "APatch 分支" ;;
+        magisk) echo "Magisk 分支" ;;
         *) echo "未指定（安裝 ZIP 時自動偵測）" ;;
     esac
 }
@@ -585,7 +585,7 @@ hide_modules_menu() {
 advanced_modules_menu() {
     while true; do
         show_header
-        echo -e "${YELLOW}[ 請選擇高階 Magisk / KSU 模組分類 ]${NC}"
+        echo -e "${YELLOW}[ 請選擇 Magisk / KSU 模組分類 ]${NC}"
         echo -e " 1)  去廣告模組 (Ad-Blocker Module)"
         echo -e " 2)  去除一加 Inte 反作弊 (Auto-Uninstall OnePlus)"
         echo -e " 3)  救磚/防重啟模組 (Bootloop Rescue Modules)"
@@ -621,16 +621,16 @@ advanced_modules_menu() {
     done
 }
 
-# 獨立玩機大師工具箱選單
+# 獨立工具箱選單
 root_tools_pack_menu() {
     while true; do
         show_header
-        echo -e "${YELLOW}[ 請選擇 Root_Tools_Pack 大師工具箱分類 ]${NC}"
+        echo -e "${YELLOW}[ 請選擇 Root_Tools_Pack 工具箱分類 ]${NC}"
         echo -e " 1)  進入：小米澎湃專區 (HyperOS Zone)"
-        echo -e " 2)  進入：越獄核心集散地 (Jailbreak Hub)"
+        echo -e " 2)  進入：越獄核心集專區 (Jailbreak Hub)"
         echo -e " 3)  進入：好用必備的 LSP 模組 (Must-Have LSPosed Modules)"
-        echo -e " 4)  進入：硬核玩機高權限軟體 (Root-Required Apps)"
-        echo -e " 5)  進入：Shizuku 免 Root 權限大師專區 (Shizuku & Root Power Users)"
+        echo -e " 4)  進入：玩機高權限軟體 (Root-Required Apps)"
+        echo -e " 5)  進入：Shizuku 免 Root 權限專區 (Shizuku & Root Power Users)"
         echo -e " 0)  返回主選單"
         echo "-------------------------------------------------"
         echo -n "請輸入編號 (0-5): "
@@ -656,15 +656,15 @@ kernelsu_family_menu() {
     local R="Root_Managers_All/KernelSU_Series"
     while true; do
         show_header
-        echo -e "${PURPLE}=== [KernelSU 家族硬核專區] ===${NC}"
-        echo -e " 1)  防查管理器 (Anti-Detection Manager)"
-        echo -e " 2)  爆改版Ksu (KernelSU Heavily Modded)"
+        echo -e "${PURPLE}=== [KernelSU分支] ===${NC}"
+        echo -e " 1)  防查管理器 (7kimisu)"
+        echo -e " 2)  爆改版Ksu (SterSU)"
         echo -e " 3)  網頁版Ksu (KernelSU WebUI)"
-        echo -e " 4)  進入：KernelSU-Next 專區"
-        echo -e " 5)  Ksu越獄專區 (Ksu Jailbreak)"
+        echo -e " 4)  KernelSU-Next"
+        echo -e " 5)  Ksu越獄分之 (Ksu Jailbreak)"
         echo -e " 6)  MizuSU 核心"
         echo -e " 7)  ReSukiSU (已改名為BakaSU)"
-        echo -e " 8)  SukiSU Ultra (以改名為SukiSU_nova)"
+        echo -e " 8)  SukiSU Ultra (已改名為SukiSU_nova)"
         echo -e " 9)  進入：Wild_KSU 專區"
         echo -e " 10) ZySU 專區 (⚠️不支援 4.x & 5.x 內核)"
         echo -e " 11) FinaSU"
@@ -734,7 +734,7 @@ kernelsu_family_menu() {
             8) 
         while true; do
             show_header
-            echo -e "${BLUE}>> SukiSU Ultra (以改名為SukiSU_nova)面具選單${NC}"
+            echo -e "${BLUE}>> SukiSU Ultra (已改名為SukiSU_nova)面具選單${NC}"
             echo -e "  1) 進入標準版"
             echo -e "  2) 進入beta"
             echo -e "  3) 進入偽裝版"
@@ -791,17 +791,17 @@ kernelsu_family_menu() {
 }
 
 # =================================================================
-# 核心二級選單：四大 Root 面具總端
+# 核心二級選單：四大 Root 面具
 # =================================================================
 root_mask_menu() {
     local M="Root_Managers_All"
     while true; do
         show_header
-        echo -e "${YELLOW}[ 請選擇要管理的面具陣營 ]${NC}"
-        echo -e " 1)  阿爾法系列面板 (Magisk Alpha)"
-        echo -e " 2)  SK系列陣營 (SKroot_Series)"
-        echo -e " 3)  進入：KernelSU 家族硬核大本營"
-        echo -e " 4)  APatch 系列面板 (APatch / FolkPatch)"
+        echo -e "${YELLOW}[ 請選擇要管理的面具 ]${NC}"
+        echo -e " 1)  阿爾法分支 (Magisk Alpha)"
+        echo -e " 2)  SKroot分支 (SKroot_Series)"
+        echo -e " 3)  進入：KernelSU 分支"
+        echo -e " 4)  APatch 分支 (APatch / FolkPatch)"
         echo -e " 0)  返回主選單"
         echo "-------------------------------------------------"
         echo -n "請輸入編號 (0-4): "
@@ -1941,7 +1941,7 @@ selinux_manage_menu() {
         [ -n "$CUR_STATUS" ] || CUR_STATUS="未知"
 
         echo -e "${CYAN}=========================================${NC}"
-        echo -e "${GREEN}           SELinux 狀態管理中心          ${NC}"
+        echo -e "${GREEN}           SELinux 狀態/切換          ${NC}"
         echo -e "${CYAN}=========================================${NC}"
         echo -e "目前系統 SEL 狀態為：${YELLOW}${CUR_STATUS}${NC}"
         echo "-----------------------------------------"
@@ -2414,12 +2414,12 @@ while true; do
     echo -e " 4) 保命區：一鍵自動識別 CPU 並備份基帶字庫"
     echo -e "${YELLOW}[  系統增強與檢測軟體區 ]${NC}"
     echo -e " 5)  進入：手機常用工具組 (Android_Phone_Utilities)"
-    echo -e " 6)  進入：環境檢測工具防線 (Environment_Check_Apps)"
-    echo -e "${YELLOW}[  高階大師控端專區 ]${NC}"
-    echo -e " 7)  進入：修改SEL狀態"
-    echo -e " 8)  進入：四大 Root 面具大本營 (阿爾法/SK/KSU/AP)"
+    echo -e " 6)  進入：環境檢測工具 (Environment_Check_Apps)"
+    echo -e "${YELLOW}[  Ciallo～(∠・ω< )⌒★ ]${NC}"
+    echo -e " 7)  修改SEL狀態"
+    echo -e " 8)  進入Root面具(阿爾法/SK/KSU/AP)"
     echo -e " 9) Root 模組安裝中心 (KernelSU / APatch / Magisk)"
-    echo -e " 10)  進入：硬核玩機 Root_Tools_Pack 工具箱"
+    echo -e " 10)  進入Root_Tools_Pack（ROOT工具）"
     echo -e " 11) 綜合安全檢測（Inte.ko + 遠控病毒）"
     echo -e " 12) shell腳本混淆"
     echo -e " 13) 安全退出工具箱"
@@ -2613,7 +2613,7 @@ pause_key
           10) root_tools_pack_menu ;;
           11) run_security_scans ;;
           12) shell_obfuscation;;
-          13) echo "已安全退出頂級搞機軍火庫。"; exit 0 ;;
+          13) echo "已推出"; exit 0 ;;
 *) echo -e "${RED}無效輸入！您的輸入為: [$main_choice]${NC}" ; sleep 1.5 ;;
 esac
 done
