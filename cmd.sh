@@ -69,7 +69,7 @@ check_android_version() {
         fi
     fi
 
-    # 4. 輸出結果 (可依你其他函數的排版調整)
+    # 4. 輸出結果
     echo -e "${GREEN}系統版本 : ${VER_STR}"
 }
 
@@ -596,9 +596,10 @@ advanced_modules_menu() {
         echo -e " 8)  一鍵安裝檢測軟體 (One-Click Installer)"
         echo -e " 9)  系統優化模塊 (Tweaks Modules)"
         echo -e " 10)  XEC kernel Pro專用模塊(XEC kernel Pro_module)"
+        echo -e " 11)  MapleSU專用模塊(MapleSU_module)"
         echo -e " 0)  返回主選單"
         echo "-------------------------------------------------"
-        echo -n "請輸入編號 (0-10): "
+        echo -n "請輸入編號 (0-11): "
         read mod_choice
         mod_choice=$(echo "$mod_choice" | tr -d '\r\n\t ')
 
@@ -614,6 +615,7 @@ advanced_modules_menu() {
             8) scan_and_install "Magisk_Ksu_Modules/One-Click Installer & Checker/" ;;
             9) scan_and_install "Magisk_Ksu_Modules/Tweaks Modules/" ;;
             10) scan_and_install "Magisk_Ksu_Modules/XEC kernel Pro_module/" ;;
+            11) scan_and_install "Magisk_Ksu_Modules/TEESimulator-RS_MapleSU/" ;;
             *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
         esac
     done
@@ -662,16 +664,19 @@ kernelsu_family_menu() {
         echo -e " 5)  Ksu越獄專區 (Ksu Jailbreak)"
         echo -e " 6)  MizuSU 核心"
         echo -e " 7)  ReSukiSU (已改名為BakaSU)"
-        echo -e " 8)  SukiSU Ultra"
+        echo -e " 8)  SukiSU Ultra (以改名為SukiSU_nova)"
         echo -e " 9)  進入：Wild_KSU 專區"
         echo -e " 10) ZySU 專區 (⚠️不支援 4.x & 5.x 內核)"
         echo -e " 11) FinaSU"
         echo -e " 12) Dafeiyu_KSU"
         echo -e " 13) XECKernelPro"
-        echo -e " 14) 直達 KernelSU 基礎主目錄"
+        echo -e " 14) MilkSU"
+        echo -e " 15) MapleSU"
+        echo -e " 16) YukiSU"
+        echo -e " 17) 直達 KernelSU 基礎主目錄"
         echo -e " 0)  返回上級選單"
         echo "-------------------------------------------------"
-        echo -n "請輸入編號 (0-14): "
+        echo -n "請輸入編號 (0-17): "
         read ksu_choice
         ksu_choice=$(echo "$ksu_choice" | tr -d '\r\n\t ')
 
@@ -729,7 +734,7 @@ kernelsu_family_menu() {
             8) 
         while true; do
             show_header
-            echo -e "${BLUE}>> SukiSU Ultra 面具選單${NC}"
+            echo -e "${BLUE}>> SukiSU Ultra (以改名為SukiSU_nova)面具選單${NC}"
             echo -e "  1) 進入標準版"
             echo -e "  2) 進入beta"
             echo -e "  3) 進入偽裝版"
@@ -743,10 +748,10 @@ kernelsu_family_menu() {
 
             case "$next_choice" in
                 0|"") break ;;
-                1) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/" ;;
-                2) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/beta/" ;;
-                3) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/Spoofed/" ;;
-                4) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu Ultra/beta+Spoofed/" ;;
+                1) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu_nova(SukiSU Ultra)/" ;;
+                2) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu_nova(SukiSU Ultra)/beta/" ;;
+                3) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu_nova(SukiSU Ultra)/Spoofed/" ;;
+                4) scan_and_install "Root_Managers_All/KernelSU_Series/Sukisu_nova(SukiSU Ultra)/beta+Spoofed/" ;;
                 *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
             esac
         done
@@ -776,7 +781,10 @@ kernelsu_family_menu() {
             11) scan_and_install "$R/FinaSU/" ;;
             12) scan_and_install "$R/Dafeiyu_KSU/" ;;
             13) scan_and_install "$R/XECKernelPro/" ;;
-            14) scan_and_install "$R/" ;;
+            14) scan_and_install "$R/MilkSU/" ;;
+            15) scan_and_install "$R/MapleSU/" ;;
+            16) scan_and_install "$R/YukiSU/" ;;
+            17) scan_and_install "$R/" ;;
             *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
         esac
     done
