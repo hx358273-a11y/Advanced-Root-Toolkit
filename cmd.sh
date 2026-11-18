@@ -597,9 +597,10 @@ advanced_modules_menu() {
         echo -e " 9)  系統優化模塊 (Tweaks Modules)"
         echo -e " 10)  XEC kernel Pro專用模塊(XEC kernel Pro_module)"
         echo -e " 11)  MapleSU專用模塊(MapleSU_module)"
+        echo -e " 12)  YukiSU專用模塊(YukiSU_module)"
         echo -e " 0)  返回主選單"
         echo "-------------------------------------------------"
-        echo -n "請輸入編號 (0-11): "
+        echo -n "請輸入編號 (0-12): "
         read mod_choice
         mod_choice=$(echo "$mod_choice" | tr -d '\r\n\t ')
 
@@ -616,6 +617,7 @@ advanced_modules_menu() {
             9) scan_and_install "Magisk_Ksu_Modules/Tweaks Modules/" ;;
             10) scan_and_install "Magisk_Ksu_Modules/XEC kernel Pro_module/" ;;
             11) scan_and_install "Magisk_Ksu_Modules/TEESimulator-RS_MapleSU/" ;;
+            12) scan_and_install "Magisk_Ksu_Modules/YukiSU_module/" ;;
             *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
         esac
     done
@@ -657,11 +659,11 @@ kernelsu_family_menu() {
     while true; do
         show_header
         echo -e "${PURPLE}=== [KernelSU分支] ===${NC}"
-        echo -e " 1)  防查管理器 (7kimisu)"
-        echo -e " 2)  爆改版Ksu (SterSU)"
+        echo -e " 1)  7kimisu"
+        echo -e " 2)  SterSU"
         echo -e " 3)  網頁版Ksu (KernelSU WebUI)"
         echo -e " 4)  KernelSU-Next"
-        echo -e " 5)  Ksu越獄分之 (Ksu Jailbreak)"
+        echo -e " 5)  Ksu越獄分支 (Ksu Jailbreak)"
         echo -e " 6)  MizuSU 核心"
         echo -e " 7)  ReSukiSU (已改名為BakaSU)"
         echo -e " 8)  SukiSU Ultra (已改名為SukiSU_nova)"
@@ -669,7 +671,7 @@ kernelsu_family_menu() {
         echo -e " 10) ZySU 專區 (⚠️不支援 4.x & 5.x 內核)"
         echo -e " 11) FinaSU"
         echo -e " 12) Dafeiyu_KSU"
-        echo -e " 13) XECKernelPro"
+        echo -e " 13) XEC Kernel Pro（已改名為XEC kernel Ultra)"
         echo -e " 14) MilkSU"
         echo -e " 15) MapleSU"
         echo -e " 16) YukiSU"
@@ -682,8 +684,8 @@ kernelsu_family_menu() {
 
         case "$ksu_choice" in
             0|"") break ;;
-            1) scan_and_install "$R/Anti-Detection Manager/" ;;
-            2) scan_and_install "$R/KernelSU Heavily Modded/" ;;
+            1) scan_and_install "$R/7kimisu/" ;;
+            2) scan_and_install "$R/SterSU/" ;;
             3) scan_and_install "$R/KernelSU WebUI/" ;;
             4)         
             while true; do
@@ -780,10 +782,30 @@ kernelsu_family_menu() {
             10) scan_and_install "$R/ZySU (Unsupported on Kernel v4.x & v5.x !!!)/" ;;
             11) scan_and_install "$R/FinaSU/" ;;
             12) scan_and_install "$R/Dafeiyu_KSU/" ;;
-            13) scan_and_install "$R/XECKernelPro/" ;;
+            13) scan_and_install "$R/XEC Kernel Pro(已改名為XEC kernel Ultra)/" ;;
             14) scan_and_install "$R/MilkSU/" ;;
             15) scan_and_install "$R/MapleSU/" ;;
-            16) scan_and_install "$R/YukiSU/" ;;
+            16) 
+             while true; do
+            show_header
+            echo -e "${BLUE}>> YukiSU 面具選單${NC}"
+            echo -e "  1) 進入標準版"
+            echo -e "  2) 進入測試版"
+            echo -e "  0) 返回 KSU 選單"
+            echo "-------------------------------------"
+
+            echo -ne "請選擇："
+            read next_choice
+            next_choice=$(echo "$next_choice" | tr -d '\r\n\t ')
+
+            case "$next_choice" in
+                0|"") break ;;
+                1) scan_and_install "Root_Managers_All/KernelSU_Series/YukiSU/" ;;
+                2) scan_and_install "Root_Managers_All/KernelSU_Series/YukiSU/beta/" ;;
+                *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
+            esac
+        done
+        ;;
             17) scan_and_install "$R/" ;;
             *) echo -e "${RED}輸入錯誤！${NC}"; sleep 1 ;;
         esac
